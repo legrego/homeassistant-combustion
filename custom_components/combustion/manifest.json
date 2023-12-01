@@ -1,0 +1,21 @@
+{
+  "domain": "combustion",
+  "name": "Combustion",
+  "codeowners": [
+    "@legrego"
+  ],
+  "config_flow": true,
+  "bluetooth": [
+    {
+      "manufacturer_id": 2503
+    }
+  ],
+  "dependencies": [
+    "bluetooth_adapters"
+  ],
+  "documentation": "https://github.com/legrego/homeassistant-combustion",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/legrego/homeassistant-combustion/issues",
+  "version": "0.0.0"
+}
