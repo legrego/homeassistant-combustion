@@ -5,6 +5,8 @@ LOGGER: Logger = getLogger(__package__)
 
 NAME = "Combustion"
 DOMAIN = "combustion"
+MANUFACTURER = "Combustion, Inc."
+DEVICE_NAME = "Predictive Thermometer"
 VERSION = "0.0.0"
 ATTRIBUTION = ""
 
