@@ -9,8 +9,9 @@ from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from custom_components.combustion.combustion_ble._parser import (
     CombustionBluetoothDeviceData,
 )
-from custom_components.combustion.combustion_ble.advertising_data import AdvertisingData
-from custom_components.combustion.combustion_ble.parser import CombustionProbeData
+from custom_components.combustion.combustion_ble.combustion_probe_data import (
+    CombustionProbeData,
+)
 
 from .const import CONF_DEVICES, DOMAIN, LOGGER
 
@@ -88,7 +89,7 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         assert self._discovered_adv is not None
 
         devices = []
-        for (addr, device) in self._all_discovered_devices.items():
+        for (addr, _device) in self._all_discovered_devices.items():
             devices.append({
                 "name": "Combustion Meatnet",
                 "address": addr,
@@ -105,7 +106,7 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _add_device_to_entry(self, entry: config_entries.ConfigEntry, address: str, device: CombustionBluetoothDeviceData) -> bool:
         """Add a Combustion device to an existing entry."""
-        LOGGER.debug(f"Adding device to existing entry")
+        LOGGER.debug("Adding device to existing entry")
         devices = entry.data.get(CONF_DEVICES, []).copy()
         devices.append({
             "name": "Combustion meatnet",

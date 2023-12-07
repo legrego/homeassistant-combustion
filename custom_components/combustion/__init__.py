@@ -5,18 +5,13 @@ https://github.com/legrego/homeassistant-combustion
 """
 from __future__ import annotations
 
-from homeassistant.components import bluetooth
-from homeassistant.config_entries import ConfigEntry, ConfigEntryNotReady
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from custom_components.combustion.combustion_ble._parser import (
-    CombustionBluetoothDeviceData,
-)
 from custom_components.combustion.bluetooth_listener import BluetoothListener
 
-from .const import CONF_DEVICES, DOMAIN
-from .coordinator import CombustionDataUpdateCoordinator
+from .const import DOMAIN
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR
