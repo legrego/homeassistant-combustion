@@ -10,7 +10,7 @@ from homeassistant.components.bluetooth.passive_update_processor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from custom_components.combustion.combustion_ble.parser import (
+from custom_components.combustion.combustion_ble._parser import (
     CombustionBluetoothDeviceData,
 )
 

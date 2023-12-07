@@ -1,12 +1,9 @@
 """Sensor platform for combustion."""
 from __future__ import annotations
 
-from homeassistant.components.bluetooth.passive_update_processor import (
-    PassiveBluetoothDataProcessor,
-    PassiveBluetoothDataUpdate,
-    PassiveBluetoothEntityKey,
-    PassiveBluetoothProcessorEntity,
-)
+from collections.abc import Mapping
+from typing import Any
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -15,12 +12,27 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, UnitOfTemperature
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.sensor import sensor_device_info_to_hass_device_info
-from sensor_state_data import DeviceKey, SensorUpdate, Units
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from sensor_state_data import Units
 
-from .const import DOMAIN, LOGGER
-from .coordinator import CombustionDataUpdateCoordinator
+from custom_components.combustion.bluetooth_listener import BluetoothListener
+from custom_components.combustion.combustion_ble.combustion_probe_data import (
+    CombustionProbeData,
+)
+
+from .const import DEVICE_NAME, DOMAIN, LOGGER, MANUFACTURER
+
+_LOGGER = LOGGER.getChild('sensor')
+
+TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key=f"{SensorDeviceClass.TEMPERATURE}_{Units.TEMP_CELSIUS}",
+    device_class=SensorDeviceClass.TEMPERATURE,
+    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=1
+)
 
 SENSOR_DESCRIPTIONS = {
     (
@@ -52,59 +64,189 @@ SENSOR_DESCRIPTIONS = {
     ),
 }
 
-def _device_key_to_bluetooth_entity_key(
-    device_key: DeviceKey,
-) -> PassiveBluetoothEntityKey:
-    """Convert a device key to an entity key."""
-    return PassiveBluetoothEntityKey(device_key.key, device_key.device_id)
+def _create_temperature_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
+    sensors: list[BaseCombustionTemperatureSensor] = [
+        CombustionVirtualCoreSensor(probe_manager, probe_data),
+        CombustionVirtualSurfaceSensor(probe_manager, probe_data),
+        CombustionVirtualAmbientSensor(probe_manager, probe_data)
+    ]
+    for i in range(len(probe_data.temperature_data)):
+        sensors.append(CombustionTemperatureSensor(probe_manager, probe_data, i + 1))
 
-def sensor_update_to_bluetooth_data_update(sensor_update: SensorUpdate):
-    """Convert a sensor update to a Bluetooth data update."""
-    # This function must convert the parsed_data
-    # from your library's update_method to a `PassiveBluetoothDataUpdate`
-    # See the structure above
+    for sensor in sensors:
+        sensor.async_init()
 
-    LOGGER.debug("Inside sensor_update_to_bluetooth_data_update")
+    return sensors
 
-    return PassiveBluetoothDataUpdate(
-        devices={
-            device_id: sensor_device_info_to_hass_device_info(device_info)
-            for device_id, device_info in sensor_update.devices.items()
-        },
-        entity_descriptions={
-             _device_key_to_bluetooth_entity_key(device_key): SENSOR_DESCRIPTIONS[
-                (description.device_class, description.native_unit_of_measurement)
-            ]
-            for device_key, description in sensor_update.entity_descriptions.items()
-            # if description.device_class and description.native_unit_of_measurement
-        },
-        entity_data={
-            _device_key_to_bluetooth_entity_key(device_key): sensor_values.native_value
-            for device_key, sensor_values in sensor_update.entity_values.items()
-        },
-        entity_names={
-            _device_key_to_bluetooth_entity_key(device_key): sensor_values.name
-            for device_key, sensor_values in sensor_update.entity_values.items()
-        },
-    )
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_devices):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_devices: AddEntitiesCallback):
     """Set up the sensor platform."""
-    LOGGER.debug("Inside async_setup_entry")
-    domain_data: dict[str, CombustionDataUpdateCoordinator] = hass.data[DOMAIN]
-    coordinators = domain_data.items()
-    LOGGER.debug("We have %s coordinators", len(coordinators))
-    for (_cid, coordinator) in coordinators:
-        LOGGER.debug("Starting setup for %s", coordinator.address)
-        processor = PassiveBluetoothDataProcessor(sensor_update_to_bluetooth_data_update)
-        entry.async_on_unload(processor.async_add_entities_listener(CombustionBluetoothSensor, async_add_devices))
-        entry.async_on_unload(coordinator.async_register_processor(processor))
-        LOGGER.debug("Finished setup for %s", coordinator.address)
+    _LOGGER.debug("Starting async_setup_entry")
+    bluetooth_listener: BluetoothListener = hass.data[DOMAIN]
+    probe_manager = ProbeManager(async_add_devices)
+    bluetooth_listener.add_update_listener(probe_manager.create_update_callback())
 
-class CombustionBluetoothSensor(PassiveBluetoothProcessorEntity[PassiveBluetoothDataProcessor[float | int | None]], SensorEntity):
-    """Combustion Bluetooth Sensor class."""
+class ProbeManager:
+    """Manage discovered predictive probes."""
+
+    def __init__(self, async_add_devices: AddEntitiesCallback) -> None:
+        """Initialize."""
+        self.async_add_devices = async_add_devices
+        self.data: dict[str, CombustionProbeData] = {}
+        self._listeners = []
+
+    def create_update_callback(self):
+        """Create callback for handling updates."""
+        @callback
+        def update(probe_data: CombustionProbeData):
+            """Handle updated data from predictive probe."""
+            if probe_data.serial_number not in self.data:
+                _LOGGER.debug("Adding sensors for new device [%s]", probe_data.serial_number)
+                self.async_add_devices(_create_temperature_sensors(self, probe_data))
+
+            self.data[probe_data.serial_number] = probe_data
+
+            _LOGGER.debug("Notifying listeners of new data for [%s]", probe_data.serial_number)
+            for listener in self._listeners:
+                listener()
+
+        return update
+
+    def add_update_listener(self, listener):
+        """Add listener to be notified of probe updates."""
+        self._listeners.append(listener)
+
+    def probe_data(self, serial_number: str) -> CombustionProbeData:
+        """Probe data for provided serial number."""
+        return self.data[serial_number]
+
+class BaseCombustionTemperatureSensor(SensorEntity):
+    """Base class for temperature sensors."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__()
+        self._attr_device_info = DeviceInfo(
+            name=f'{DEVICE_NAME} {probe_data.serial_number}',
+            identifiers={(DOMAIN, probe_data.serial_number)},
+            manufacturer=MANUFACTURER,
+        )
+        self.device_serial_number = probe_data.serial_number
+        self.probe_manager = probe_manager
+        self._attr_has_entity_name = True
+        self.entity_description = TEMPERATURE_SENSOR_DESCRIPTION
+
+    def async_init(self):
+        """Async initialization."""
+        self.probe_manager.add_update_listener(self.on_update)
+
+    @callback
+    def on_update(self):
+        """Process probe updates."""
+        _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
+        self.async_schedule_update_ha_state()
+
+    @property
+    def should_poll(self) -> bool:
+        """Do not poll for updates."""
+        return False
+
+class CombustionTemperatureSensor(BaseCombustionTemperatureSensor):
+    """Combustion Temperature Sensor class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData, thermistor_id: int) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self.thermistor_id = thermistor_id
+        self._attr_unique_id = f'{probe_data.serial_number}--thermistor--{thermistor_id}'
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return f'Temperature {self.thermistor_id}'
 
     @property
     def native_value(self) -> str:
         """Return the native value of the sensor."""
-        return self.processor.entity_data.get(self.entity_key)
+        return self.probe_manager.probe_data(self.device_serial_number).temperature_data[self.thermistor_id - 1]
+
+class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
+    """Combustion virtual core sensor class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self._attr_unique_id = f'{probe_data.serial_number}--sensor--core'
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'Core Temperature'
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
+        return temp
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        """State attributes."""
+        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
+        return {
+            "thermistor_id": id
+        }
+
+class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
+    """Combustion virtual ambient sensor class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self._attr_unique_id = f'{probe_data.serial_number}--sensor--ambient'
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'Ambient Temperature'
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
+        return temp
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        """State attributes."""
+        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
+        return {
+            "thermistor_id": id
+        }
+
+class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
+    """Combustion virtual surface sensor class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self._attr_unique_id = f'{probe_data.serial_number}--sensor--surface'
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'Surface Temperature'
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
+        return temp
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        """State attributes."""
+        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
+        return {
+            "thermistor_id": id
+        }

@@ -6,8 +6,11 @@ from typing import Any
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
-from custom_components.combustion.combustion_ble.parser import (
+from custom_components.combustion.combustion_ble._parser import (
     CombustionBluetoothDeviceData,
+)
+from custom_components.combustion.combustion_ble.combustion_probe_data import (
+    CombustionProbeData,
 )
 
 from .const import CONF_DEVICES, DOMAIN, LOGGER
@@ -30,36 +33,36 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Bluetooth discovery step."""
         LOGGER.debug("async step bluetooth for device %s", str(discovery_info.as_dict()))
 
-        device = CombustionBluetoothDeviceData()
-        if not device.supported(discovery_info):
-            return self.async_abort(reason="not_supported")
-
-        self._all_discovered_devices[discovery_info.address] = device
-
-        entries = self._async_current_entries()
-        if entries:
-            LOGGER.debug("Discovered new device, but we already have an entry created.")
-            assert len(entries) == 1
-            assert self._add_device_to_entry(entries[0], discovery_info.address, device)
-            return self.async_abort(reason="updated_entry")
-
         # For now, only a single "meatnet" is supported. This prevents each device from showing as an independent integration.
         # Instead we ask to configure once, and create devices for each of the entities on the meatnet.
         await self.async_set_unique_id("combustion_meatnet")
         self._abort_if_unique_id_configured()
 
-        self._discovered_adv = device
+        data = CombustionProbeData.from_advertisement(discovery_info)
+        if not data.valid:
+            return self.async_abort(reason="not_supported")
+
+        self._all_discovered_devices[discovery_info.address] = data
+
+        entries = self._async_current_entries()
+        if entries:
+            LOGGER.debug("Discovered new device, but we already have an entry created.")
+            assert len(entries) == 1
+            assert self._add_device_to_entry(entries[0], discovery_info.address, data)
+            return self.async_abort(reason="updated_entry")
+
+        # # For now, only a single "meatnet" is supported. This prevents each device from showing as an independent integration.
+        # # Instead we ask to configure once, and create devices for each of the entities on the meatnet.
+        # await self.async_set_unique_id("combustion_meatnet")
+        # self._abort_if_unique_id_configured()
+
+        self._discovered_adv = data
 
         self.context["title_placeholders"] = {
-            "name": device.title,
+            "name": "Combustion Meatnet",
             "address": discovery_info.address,
         }
 
-        # Display advertisement
-        # {'name': 'FB-57-A0-67-14-9A', 'address': 'FB:57:A0:67:14:9A', 'rssi': -36, 'manufacturer_data': {2503: b'\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'}, 'service_data': {}, 'service_uuids': [], 'source': 'D8:3A:DD:63:C3:81', 'advertisement': AdvertisementData(manufacturer_data={2503: b'\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'}, rssi=-36), 'device': BLEDevice(FB:57:A0:67:14:9A, FB-57-A0-67-14-9A), 'connectable': True, 'time': 2650511.905738745}
-
-        # Probe advertisement
-        # {'name': 'C2-71-04-30-7E-40', 'address': 'C2:71:04:30:7E:40', 'rssi': -64, 'manufacturer_data': {2503: b'\x01t\x1b\x00\x10?\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xc0\x00\x00'}, 'service_data': {}, 'service_uuids': [], 'source': 'D8:3A:DD:63:C3:81', 'advertisement': AdvertisementData(manufacturer_data={2503: b'\x01t\x1b\x00\x10?\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xc0\x00\x00'}, rssi=-64), 'device': BLEDevice(C2:71:04:30:7E:40, C2-71-04-30-7E-40), 'connectable': True, 'time': 2650787.586090339}
         return await self.async_step_confirm()
 
 
@@ -75,7 +78,7 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="confirm",
             description_placeholders={
-                "name": self._discovered_adv.title
+                "name": "Combustion Meatnet"
             },
         )
 
@@ -86,9 +89,9 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         assert self._discovered_adv is not None
 
         devices = []
-        for (addr, device) in self._all_discovered_devices.items():
+        for (addr, _device) in self._all_discovered_devices.items():
             devices.append({
-                "name": device.title,
+                "name": "Combustion Meatnet",
                 "address": addr,
                 "product_type": 2 # hardcode meatnet probe
             })
@@ -103,10 +106,10 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _add_device_to_entry(self, entry: config_entries.ConfigEntry, address: str, device: CombustionBluetoothDeviceData) -> bool:
         """Add a Combustion device to an existing entry."""
-        LOGGER.debug(f"Adding device [{device.title}] to existing entry")
+        LOGGER.debug("Adding device to existing entry")
         devices = entry.data.get(CONF_DEVICES, []).copy()
         devices.append({
-            "name": device.title,
+            "name": "Combustion meatnet",
             "address": address,
             "product_type": 2 # hardcode meatnet probe
         })
