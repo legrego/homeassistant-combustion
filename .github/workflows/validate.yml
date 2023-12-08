@@ -47,7 +47,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Setup pyudev
-        run: apt-get install -y python3-pyudev
+        run: sudo apt-get install -y python3-pyudev
       - name: Install requirements
         run: python3 -m pip install poetry~=1.7 && poetry install
       - name: Run tests
