@@ -40,6 +40,11 @@ This integration will not display information about the repeater itself, only th
 
 If you want to contribute to this please read the [Contribution guidelines](CONTRIBUTING.md)
 
+## Credits
+
+Combustion, Inc. for their wonderful [documentation](https://github.com/combustion-inc/combustion-documentation) and [code samples](https://github.com/combustion-inc/combustion-ios-ble).
+
+
 ***
 
 [combustion]: https://combustion.inc/
