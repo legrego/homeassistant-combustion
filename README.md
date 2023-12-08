@@ -1,4 +1,4 @@
-# 🔥 Combustion BLE Integration</span>
+# 🔥 Combustion BLE Integration
 
 Integrate [Combustion](https://combustion.inc) predictive probes into Home Assistant.
 
