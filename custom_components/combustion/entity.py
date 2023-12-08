@@ -1,25 +1,19 @@
 """CombustionEntity class."""
 from __future__ import annotations
 
-from homeassistant.components.bluetooth.passive_update_coordinator import (
-    PassiveBluetoothCoordinatorEntity,
-)
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, Entity
 
-from .const import DOMAIN, NAME, VERSION
-from .coordinator import CombustionDataUpdateCoordinator
+from .const import DEVICE_NAME, DOMAIN, MANUFACTURER
 
 
-class CombustionEntity(PassiveBluetoothCoordinatorEntity):
+class CombustionEntity(Entity):
     """CombustionEntity class."""
 
-    def __init__(self, coordinator: CombustionDataUpdateCoordinator) -> None:
+    def __init__(self, serial_number: str) -> None:
         """Initialize."""
-        super().__init__(coordinator)
-        self._attr_unique_id = coordinator.address
+        super().__init__()
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, coordinator.address)},
-            name=coordinator.device.product_name,
-            model=VERSION,
-            manufacturer=NAME,
+            name=f'{DEVICE_NAME} {serial_number}',
+            identifiers={(DOMAIN, serial_number)},
+            manufacturer=MANUFACTURER,
         )
