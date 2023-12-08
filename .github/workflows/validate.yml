@@ -49,7 +49,7 @@ jobs:
       - name: Setup pyudev
         run: sudo apt-get install -y python3-pyudev
       - name: Install requirements
-        run: python3 -m pip install poetry~=1.7 && poetry install
+        run: python3 -m pip install poetry~=1.7 && pip install pyudev && poetry install
       - name: Run tests
         run: |
           poetry run pytest
