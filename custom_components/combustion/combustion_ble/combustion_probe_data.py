@@ -1,7 +1,7 @@
 """Parser for Combustion BLE advertisements."""
 from __future__ import annotations
 
-from home_assistant_bluetooth import BluetoothServiceInfo
+from home_assistant_bluetooth import BluetoothServiceInfoBleak
 from sensor_state_data import description
 
 from custom_components.combustion.const import BT_MANUFACTURER_ID, LOGGER
@@ -96,9 +96,9 @@ class CombustionProbeData:
 
 
     @staticmethod
-    def from_advertisement(service_info: BluetoothServiceInfo):
+    def from_advertisement(service_info: BluetoothServiceInfoBleak):
         """Create instance from BT advertisement data."""
-        LOGGER.debug("Parsing combustion BLE advertisement data: %s", service_info.name)
+        LOGGER.debug("Parsing combustion BLE advertisement data: %s", service_info.as_dict)
 
         vendor_id = 0x09C7.to_bytes(2, 'big')
         data = vendor_id + service_info.manufacturer_data[BT_MANUFACTURER_ID]

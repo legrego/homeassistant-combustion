@@ -1,3 +1,37 @@
+[tool.poetry]
+name = "homeassistant-combustion"
+version = "0.0.0"
+description = ""
+authors = ["Larry Gregory <lgregorydev@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "combustion", from = "custom_components" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+
+[tool.poetry.group.dev.dependencies]
+bluetooth_sensor_state_data = ">=1.6.1"
+colorlog = "==6.8.0"
+homeassistant = "==2023.11.1"
+pip = ">=21.0,<23.2"
+ruff = "==0.1.6"
+
+[tool.poetry.group.test.dependencies]
+pytest = ">=7.3.1"
+pytest-cov = ">=4.0.0"
+pytest-homeassistant-custom-component = ">=0.13.45"
+bleak-retry-connector = "==3.3.0"
+pyserial = "==3.5"
+bluetooth-adapters = "==0.16.1"
+bluetooth-auto-recovery = "==1.2.3"
+aiohttp_cors = "==0.7.0"
+pyudev = "==0.24.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.isort]
 multi_line_output = 3
 include_trailing_comma = true
