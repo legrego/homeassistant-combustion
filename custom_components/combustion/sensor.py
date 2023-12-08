@@ -17,10 +17,11 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from sensor_state_data import Units
 
-from custom_components.combustion.bluetooth_listener import BluetoothListener
 from custom_components.combustion.combustion_ble.combustion_probe_data import (
     CombustionProbeData,
 )
+from custom_components.combustion.entity import CombustionEntity
+from custom_components.combustion.probe_manager import ProbeManager
 
 from .const import DEVICE_NAME, DOMAIN, LOGGER, MANUFACTURER
 
@@ -78,54 +79,23 @@ def _create_temperature_sensors(probe_manager: ProbeManager, probe_data: Combust
 
     return sensors
 
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_devices: AddEntitiesCallback):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the sensor platform."""
     _LOGGER.debug("Starting async_setup_entry")
-    bluetooth_listener: BluetoothListener = hass.data[DOMAIN]
-    probe_manager = ProbeManager(async_add_devices)
-    bluetooth_listener.add_update_listener(probe_manager.create_update_callback())
 
-class ProbeManager:
-    """Manage discovered predictive probes."""
+    def _create_sensors_callback(pm: ProbeManager, probe_data: CombustionProbeData):
+        sensors = _create_temperature_sensors(pm, probe_data)
+        async_add_entities(sensors)
 
-    def __init__(self, async_add_devices: AddEntitiesCallback) -> None:
-        """Initialize."""
-        self.async_add_devices = async_add_devices
-        self.data: dict[str, CombustionProbeData] = {}
-        self._listeners = []
+    probe_manager: ProbeManager = hass.data[DOMAIN]
+    probe_manager.init_sensor_platform(_create_sensors_callback)
 
-    def create_update_callback(self):
-        """Create callback for handling updates."""
-        @callback
-        def update(probe_data: CombustionProbeData):
-            """Handle updated data from predictive probe."""
-            if probe_data.serial_number not in self.data:
-                _LOGGER.debug("Adding sensors for new device [%s]", probe_data.serial_number)
-                self.async_add_devices(_create_temperature_sensors(self, probe_data))
-
-            self.data[probe_data.serial_number] = probe_data
-
-            _LOGGER.debug("Notifying listeners of new data for [%s]", probe_data.serial_number)
-            for listener in self._listeners:
-                listener()
-
-        return update
-
-    def add_update_listener(self, listener):
-        """Add listener to be notified of probe updates."""
-        self._listeners.append(listener)
-
-    def probe_data(self, serial_number: str) -> CombustionProbeData:
-        """Probe data for provided serial number."""
-        return self.data[serial_number]
-
-class BaseCombustionTemperatureSensor(SensorEntity):
+class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     """Base class for temperature sensors."""
 
     def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
         """Initialize."""
-        super().__init__()
+        super().__init__(probe_data.serial_number)
         self._attr_device_info = DeviceInfo(
             name=f'{DEVICE_NAME} {probe_data.serial_number}',
             identifiers={(DOMAIN, probe_data.serial_number)},

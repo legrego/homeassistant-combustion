@@ -10,10 +10,12 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from custom_components.combustion.bluetooth_listener import BluetoothListener
+from custom_components.combustion.probe_manager import ProbeManager
 
 from .const import DOMAIN
 
 PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
     Platform.SENSOR
 ]
 
@@ -23,36 +25,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up this integration using UI."""
     hass.data.setdefault(DOMAIN, {})
 
-    # for device_conf in entry.data.get(CONF_DEVICES):
-    #     name = device_conf.get("name")
-    #     address = device_conf.get("address")
-    #     device_conf.get("product_type")
+    listener = BluetoothListener(hass, entry)
+    probe_manager = ProbeManager(listener)
 
-    #     # Not sure if this pattern makes sense, but I'm loosely basing it off of
-    #     # https://github.com/home-assistant/core/blob/419dc8adb1026c57a3fe5f004bcd2c6d76710f9f/homeassistant/components/thermopro/__init__.py
-    #     # Seems strange to have an unused varable dangling here.
-    #     data = CombustionBluetoothDeviceData()
-
-    #     ble_device = bluetooth.async_ble_device_from_address(
-    #         hass, address.upper(), True
-    #     )
-
-    #     if not ble_device:
-    #         raise ConfigEntryNotReady(
-    #             f"Could not find Combustion device [{name}] with address [{address}]"
-    #         )
-
-    #     hass.data[DOMAIN][address] = coordinator = CombustionDataUpdateCoordinator(
-    #         hass=hass,
-    #         ble_device=ble_device,
-    #         update_method=data.update
-    #     )
-
-    hass.data[DOMAIN] = listener = BluetoothListener(hass, entry)
+    hass.data[DOMAIN] = probe_manager
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
+    probe_manager.async_init()
     listener.async_init()
 
     return True

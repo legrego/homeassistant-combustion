@@ -6,9 +6,6 @@ from typing import Any
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
-from custom_components.combustion.combustion_ble._parser import (
-    CombustionBluetoothDeviceData,
-)
 from custom_components.combustion.combustion_ble.combustion_probe_data import (
     CombustionProbeData,
 )
@@ -26,8 +23,8 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
     def __init__(self) -> None:
         """Initialize the config flow."""
-        self._discovered_adv: CombustionBluetoothDeviceData | None = None
-        self._all_discovered_devices: dict[str, CombustionBluetoothDeviceData] = {}
+        self._discovered_adv: CombustionProbeData | None = None
+        self._all_discovered_devices: dict[str, CombustionProbeData] = {}
 
     async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak) -> config_entries.FlowResult:
         """Bluetooth discovery step."""
@@ -104,7 +101,7 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    def _add_device_to_entry(self, entry: config_entries.ConfigEntry, address: str, device: CombustionBluetoothDeviceData) -> bool:
+    def _add_device_to_entry(self, entry: config_entries.ConfigEntry, address: str, device: CombustionProbeData) -> bool:
         """Add a Combustion device to an existing entry."""
         LOGGER.debug("Adding device to existing entry")
         devices = entry.data.get(CONF_DEVICES, []).copy()
