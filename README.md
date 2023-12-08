@@ -1,4 +1,4 @@
-# <img src="./assets/icon.webp" alt="Combustion Icon" style="width: 1em; valign:center"/> Combustion BLE Integration
+# <img src="assets/icon.webp" alt="Combustion Icon" style="width: 1em; valign:center"/> Combustion BLE Integration
 
 Integrate [Combustion](https://combustion.inc) predictive probes into Home Assistant.
 
