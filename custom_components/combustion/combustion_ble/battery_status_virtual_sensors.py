@@ -10,27 +10,6 @@ class BatteryStatus(Enum):
 
     MASK = 0x1
 
-class BatteryStatusVirtualSensors:
-    """Representation of the battery status & virtual sensors portion of the advertisement payload."""
-
-    def __init__(self, battery_status: BatteryStatus, virtual_sensors: 'VirtualSensors'):
-        """Initialize."""
-        self.battery_status = battery_status
-        self.virtual_sensors = virtual_sensors
-
-    @staticmethod
-    def from_byte(byte):
-        """Create instance from raw byte."""
-        raw_status = byte & BatteryStatus.MASK.value
-        battery = BatteryStatus(raw_status) if raw_status in BatteryStatus.__members__.values() else BatteryStatus.OK
-        virtual_sensors = VirtualSensors.from_byte(byte >> 1)
-        return BatteryStatusVirtualSensors(battery, virtual_sensors)
-
-    @staticmethod
-    def default_values():
-        """Generate default values."""
-        return BatteryStatusVirtualSensors(BatteryStatus.OK, VirtualSensors(VirtualCoreSensor.T1, VirtualSurfaceSensor.T4, VirtualAmbientSensor.T5))
-
 class VirtualCoreSensor(Enum):
     """Virtual Core Sensor."""
 
@@ -42,6 +21,10 @@ class VirtualCoreSensor(Enum):
     T6 = 0x05
 
     MASK = 0x7
+
+    def sensor_number(self):
+        """Display value (1-based) for this sensor."""
+        return int(self.value) + 1
 
     def temperature_from(self, temperatures):
         """Get temperature for virtual sensor."""
@@ -57,6 +40,10 @@ class VirtualSurfaceSensor(Enum):
 
     MASK = 0x3
 
+    def sensor_number(self):
+        """Display value (1-based) for this sensor."""
+        return int(self.value) + 4
+
     def temperature_from(self, temperatures):
         """Get temperature for virtual sensor."""
         surface_sensor_number = int(self.value) + 3
@@ -71,6 +58,10 @@ class VirtualAmbientSensor(Enum):
     T8 = 0x03
 
     MASK = 0x3
+
+    def sensor_number(self):
+        """Display value (1-based) for this sensor."""
+        return int(self.value) + 5
 
     def temperature_from(self, temperatures):
         """Get temperature for virtual sensor."""
@@ -90,12 +81,43 @@ class VirtualSensors:
     def from_byte(byte):
         """Create instances from byte."""
         raw_virtual_core = byte & VirtualCoreSensor.MASK.value
-        virtual_core = VirtualCoreSensor(raw_virtual_core) if raw_virtual_core in VirtualCoreSensor.__members__.values() else VirtualCoreSensor.T1
+        try:
+            virtual_core = VirtualCoreSensor(raw_virtual_core)
+        except ValueError:
+            virtual_core = VirtualCoreSensor.T1
 
         raw_virtual_surface = (byte >> 3) & VirtualSurfaceSensor.MASK.value
-        virtual_surface = VirtualSurfaceSensor(raw_virtual_surface) if raw_virtual_surface in VirtualSurfaceSensor.__members__.values() else VirtualSurfaceSensor.T4
+        try:
+            virtual_surface = VirtualSurfaceSensor(raw_virtual_surface)
+        except ValueError:
+            virtual_surface = VirtualSurfaceSensor.T4
 
         raw_virtual_ambient = (byte >> 5) & VirtualAmbientSensor.MASK.value
-        virtual_ambient = VirtualAmbientSensor(raw_virtual_ambient) if raw_virtual_ambient in VirtualAmbientSensor.__members__.values() else VirtualAmbientSensor.T5
+        try:
+            virtual_ambient = VirtualAmbientSensor(raw_virtual_ambient)
+        except ValueError:
+            virtual_ambient = VirtualAmbientSensor.T5
 
         return VirtualSensors(virtual_core, virtual_surface, virtual_ambient)
+
+class BatteryStatusVirtualSensors:
+    """Representation of the battery status & virtual sensors portion of the advertisement payload."""
+
+    def __init__(self, battery_status: BatteryStatus, virtual_sensors: VirtualSensors):
+        """Initialize."""
+        self.battery_status = battery_status
+        self.virtual_sensors = virtual_sensors
+
+    @staticmethod
+    def from_byte(byte):
+        """Create instance from raw byte."""
+        raw_status = byte & BatteryStatus.MASK.value
+        battery = BatteryStatus(raw_status)
+        virtual_sensors = VirtualSensors.from_byte(byte >> 1)
+        return BatteryStatusVirtualSensors(battery, virtual_sensors)
+
+    @staticmethod
+    def default_values():
+        """Generate default values."""
+        return BatteryStatusVirtualSensors(BatteryStatus.OK, VirtualSensors(VirtualCoreSensor.T1, VirtualSurfaceSensor.T4, VirtualAmbientSensor.T5))
+
