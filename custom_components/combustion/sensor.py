@@ -13,7 +13,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import EntityPlatformState
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from sensor_state_data import Units
 
@@ -23,7 +23,7 @@ from custom_components.combustion.combustion_ble.combustion_probe_data import (
 from custom_components.combustion.entity import CombustionEntity
 from custom_components.combustion.probe_manager import ProbeManager
 
-from .const import DEVICE_NAME, DOMAIN, LOGGER, MANUFACTURER
+from .const import DOMAIN, LOGGER
 
 _LOGGER = LOGGER.getChild('sensor')
 
@@ -33,6 +33,14 @@ TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
     native_unit_of_measurement=UnitOfTemperature.CELSIUS,
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=1
+)
+
+RSSI_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key=f"{SensorDeviceClass.SIGNAL_STRENGTH}_{Units.SIGNAL_STRENGTH_DECIBELS_MILLIWATT}",
+    device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+    native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_registry_enabled_default=False,
 )
 
 SENSOR_DESCRIPTIONS = {
@@ -79,16 +87,65 @@ def _create_temperature_sensors(probe_manager: ProbeManager, probe_data: Combust
 
     return sensors
 
+def _create_diagnostic_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
+    sensors: list[CombustionEntity] = [
+        CombustionRSSISensor(probe_manager, probe_data)
+    ]
+
+    for sensor in sensors:
+        sensor.async_init()
+
+    return sensors
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the sensor platform."""
     _LOGGER.debug("Starting async_setup_entry")
 
     def _create_sensors_callback(pm: ProbeManager, probe_data: CombustionProbeData):
         sensors = _create_temperature_sensors(pm, probe_data)
+        sensors.extend(_create_diagnostic_sensors(pm, probe_data))
         async_add_entities(sensors)
 
     probe_manager: ProbeManager = hass.data[DOMAIN]
     probe_manager.init_sensor_platform(_create_sensors_callback)
+
+class CombustionRSSISensor(CombustionEntity, SensorEntity):
+    """RSSI diagnostic sensor."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_data.serial_number)
+        self.device_serial_number = probe_data.serial_number
+        self.probe_manager = probe_manager
+        self._attr_has_entity_name = True
+        self._attr_unique_id = f'{probe_data.serial_number}--rssi'
+        self.entity_description = RSSI_SENSOR_DESCRIPTION
+
+    def async_init(self):
+        """Async initialization."""
+        self.probe_manager.add_update_listener(self.on_update)
+
+    @property
+    def should_poll(self) -> bool:
+        """Do not poll for updates."""
+        return False
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'RSSI'
+
+    @callback
+    def on_update(self):
+        """Process probe updates."""
+        _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
+        if self._platform_state == EntityPlatformState.ADDED:
+            self.async_schedule_update_ha_state()
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        return self.probe_manager.probe_data(self.device_serial_number).rssi
 
 class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     """Base class for temperature sensors."""
@@ -96,11 +153,6 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
         """Initialize."""
         super().__init__(probe_data.serial_number)
-        self._attr_device_info = DeviceInfo(
-            name=f'{DEVICE_NAME} {probe_data.serial_number}',
-            identifiers={(DOMAIN, probe_data.serial_number)},
-            manufacturer=MANUFACTURER,
-        )
         self.device_serial_number = probe_data.serial_number
         self.probe_manager = probe_manager
         self._attr_has_entity_name = True
@@ -114,7 +166,8 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     def on_update(self):
         """Process probe updates."""
         _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
-        self.async_schedule_update_ha_state()
+        if self._platform_state == EntityPlatformState.ADDED:
+            self.async_schedule_update_ha_state()
 
     @property
     def should_poll(self) -> bool:

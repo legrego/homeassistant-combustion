@@ -21,9 +21,11 @@ INVALID_PROBE_SERIAL_NUMBER = 0
 class CombustionProbeData:
     """Data for Combustion Probes."""
 
-    def __init__(self, advertising_data: AdvertisingData) -> None:
+    def __init__(self, advertising_data: AdvertisingData, rssi: int, address: str) -> None:
         """Initialize the class."""
         self.advertising_data = advertising_data
+        self._rssi = rssi
+        self._address = address
 
     @property
     def valid(self) -> bool:
@@ -33,6 +35,20 @@ class CombustionProbeData:
         This indicates the repeater is not connected to an actual probe.
         """
         return self.advertising_data.serial_number != INVALID_PROBE_SERIAL_NUMBER
+
+    @property
+    def address(self) -> str:
+        """The address of the device which sent the advertising payload.
+
+        IMPORTANT: This might not be the actual probe where the measurement happened. The address might be from a Meatnet repeater.
+        """
+        return self._address
+
+
+    @property
+    def rssi(self) -> str:
+        """Signal strength."""
+        return self._rssi
 
     @property
     def serial_number(self) -> str | None:
@@ -70,9 +86,8 @@ class CombustionProbeData:
         temps = self.temperature_data
         virtual_sensors = self.advertising_data.battery_status_virtual_sensors.virtual_sensors
         temperature = virtual_sensors.virtual_core.temperature_from(temps)
-        probe_id = virtual_sensors.virtual_core.value + 1
-
-        return (probe_id, temperature)
+        sensor_number = virtual_sensors.virtual_core.sensor_number()
+        return (sensor_number, temperature)
 
     @property
     def ambient_sensor(self) -> tuple[int, float]:
@@ -80,9 +95,9 @@ class CombustionProbeData:
         temps = self.temperature_data
         virtual_sensors = self.advertising_data.battery_status_virtual_sensors.virtual_sensors
         temperature = virtual_sensors.virtual_ambient.temperature_from(temps)
-        probe_id = virtual_sensors.virtual_ambient.value + 1
+        sensor_number = virtual_sensors.virtual_ambient.sensor_number()
 
-        return (probe_id, temperature)
+        return (sensor_number, temperature)
 
     @property
     def surface_sensor(self) -> tuple[int, float]:
@@ -90,9 +105,9 @@ class CombustionProbeData:
         temps = self.temperature_data
         virtual_sensors = self.advertising_data.battery_status_virtual_sensors.virtual_sensors
         temperature = virtual_sensors.virtual_surface.temperature_from(temps)
-        probe_id = virtual_sensors.virtual_surface.value + 1
+        sensor_number = virtual_sensors.virtual_surface.sensor_number()
 
-        return (probe_id, temperature)
+        return (sensor_number, temperature)
 
 
     @staticmethod
@@ -104,5 +119,5 @@ class CombustionProbeData:
         data = vendor_id + service_info.manufacturer_data[BT_MANUFACTURER_ID]
         advertising_data = AdvertisingData.from_data(data)
 
-        return CombustionProbeData(advertising_data)
+        return CombustionProbeData(advertising_data, service_info.rssi, service_info.address)
 
