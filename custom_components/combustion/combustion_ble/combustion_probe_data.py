@@ -44,6 +44,15 @@ class CombustionProbeData:
         """
         return self._address
 
+    @property
+    def device_type(self) -> str:
+        """Type of device which sent the advertising payload.
+
+        IMPORTANT: This might not be the actual probe where the measurement happened. The type might be from a Meatnet repeater.
+        """
+
+        return self.advertising_data.type.name
+
 
     @property
     def rssi(self) -> str:
@@ -109,11 +118,28 @@ class CombustionProbeData:
 
         return (sensor_number, temperature)
 
+    def to_dict(self) -> dict:
+        """Convert CombustionProbeData instance to a dictionary."""
+        data = {
+            'valid': self.valid,
+            'address': self.address,
+            'rssi': self.rssi,
+            'serial_number': self.serial_number,
+            'probe_id': self.probe_id,
+            'mode': self.mode,
+            'battery_ok': self.battery_ok,
+            'temperature_data': self.temperature_data,
+            'core_sensor': self.core_sensor,
+            'ambient_sensor': self.ambient_sensor,
+            'surface_sensor': self.surface_sensor
+        }
+        return data
+
 
     @staticmethod
     def from_advertisement(service_info: BluetoothServiceInfoBleak):
         """Create instance from BT advertisement data."""
-        LOGGER.debug("Parsing combustion BLE advertisement data: %s", service_info.as_dict)
+        LOGGER.debug("Parsing combustion BLE advertisement data: %s", service_info.as_dict())
 
         vendor_id = 0x09C7.to_bytes(2, 'big')
         data = vendor_id + service_info.manufacturer_data[BT_MANUFACTURER_ID]
