@@ -21,15 +21,15 @@ jobs:
         shell: "bash"
         run: |
           yq -i -o json '.version="${{ github.event.release.tag_name }}"' \
-            "${{ github.workspace }}/custom_components/homeassistant-combustion/manifest.json"
+            "${{ github.workspace }}/custom_components/combustion/manifest.json"
 
       - name: "ZIP the integration directory"
         shell: "bash"
         run: |
-          cd "${{ github.workspace }}/custom_components/homeassistant-combustion"
+          cd "${{ github.workspace }}/custom_components/combustion"
           zip combustion.zip -r ./
 
       - name: "Upload the ZIP file to the release"
         uses: softprops/action-gh-release@v0.1.15
         with:
-          files: ${{ github.workspace }}/custom_components/homeassistant-combustion/combustion.zip
+          files: ${{ github.workspace }}/custom_components/combustion/combustion.zip
