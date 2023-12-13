@@ -27,12 +27,21 @@ from .const import DOMAIN, LOGGER
 
 _LOGGER = LOGGER.getChild('sensor')
 
-TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
+VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
     key=f"{SensorDeviceClass.TEMPERATURE}_{Units.TEMP_CELSIUS}",
     device_class=SensorDeviceClass.TEMPERATURE,
     native_unit_of_measurement=UnitOfTemperature.CELSIUS,
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=1
+)
+
+TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key=f"{SensorDeviceClass.TEMPERATURE}_{Units.TEMP_CELSIUS}",
+    device_class=SensorDeviceClass.TEMPERATURE,
+    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=1,
+    entity_registry_enabled_default=False,
 )
 
 RSSI_SENSOR_DESCRIPTION = SensorEntityDescription(
@@ -156,7 +165,6 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
         self.device_serial_number = probe_data.serial_number
         self.probe_manager = probe_manager
         self._attr_has_entity_name = True
-        self.entity_description = TEMPERATURE_SENSOR_DESCRIPTION
 
     def async_init(self):
         """Async initialization."""
@@ -195,6 +203,7 @@ class CombustionTemperatureSensor(BaseCombustionTemperatureSensor):
         super().__init__(probe_manager, probe_data)
         self.thermistor_id = thermistor_id
         self._attr_unique_id = f'{probe_data.serial_number}--thermistor--{thermistor_id}'
+        self.entity_description = TEMPERATURE_SENSOR_DESCRIPTION
 
     @property
     def name(self):
@@ -213,6 +222,7 @@ class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
         """Initialize."""
         super().__init__(probe_manager, probe_data)
         self._attr_unique_id = f'{probe_data.serial_number}--sensor--core'
+        self.entity_description = VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION
 
     @property
     def name(self):
@@ -240,6 +250,7 @@ class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
         """Initialize."""
         super().__init__(probe_manager, probe_data)
         self._attr_unique_id = f'{probe_data.serial_number}--sensor--ambient'
+        self.entity_description = VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION
 
     @property
     def name(self):
@@ -267,6 +278,7 @@ class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
         """Initialize."""
         super().__init__(probe_manager, probe_data)
         self._attr_unique_id = f'{probe_data.serial_number}--sensor--surface'
+        self.entity_description = VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION
 
     @property
     def name(self):
