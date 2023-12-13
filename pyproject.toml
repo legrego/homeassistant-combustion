@@ -9,6 +9,7 @@ packages = [{ include = "combustion", from = "custom_components" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
+bitstring = "^4.1.4"
 
 [tool.poetry.group.dev.dependencies]
 bluetooth_sensor_state_data = ">=1.6.1"

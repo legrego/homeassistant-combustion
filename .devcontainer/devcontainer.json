@@ -16,6 +16,7 @@
 			"extensions": [
 				"ms-python.python",
 				"python.pylint",
+				"eamodio.gitlens",
 				"github.copilot",
 				"github.copilot-chat",
 				"github.vscode-github-actions",

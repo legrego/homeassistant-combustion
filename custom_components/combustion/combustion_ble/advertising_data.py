@@ -3,6 +3,8 @@
 from enum import Enum
 from typing import NamedTuple, Optional
 
+from custom_components.combustion.const import LOGGER
+
 from .battery_status_virtual_sensors import BatteryStatusVirtualSensors
 from .hop_count import HopCount
 from .mode_id import ModeId
@@ -16,6 +18,7 @@ class CombustionProductType(Enum):
     PROBE = 0x01
     MEAT_NET_NODE = 0x02
 
+
 class AdvertisingData(NamedTuple):
     """Bluetooth Advertising Data."""
 
@@ -25,16 +28,21 @@ class AdvertisingData(NamedTuple):
     mode_id: ModeId
     battery_status_virtual_sensors: BatteryStatusVirtualSensors
     hop_count: HopCount
+    bit_string: str
 
     @staticmethod
     def from_data(data: bytes) -> Optional['AdvertisingData']:
         """Create instance from raw advertising data."""
+        from bitstring import Bits
+
         if data is None or len(data) < 20:
+            LOGGER.warn('Not constructing Advertising data because [%s] != 20', len(data))
             return None
 
         # Vendor ID
         vendor_id = int.from_bytes(data[0:2], byteorder='big')
         if vendor_id != 0x09C7:
+            LOGGER.warn("Not constructing Advertising data because [%s] != 0x09C7", vendor_id)
             return None
 
         # Product type
@@ -56,4 +64,7 @@ class AdvertisingData(NamedTuple):
         # Hop Count
         hop_count = HopCount.from_network_info_byte(data[22]) if len(data) >= 23 else HopCount.default_values()
 
-        return AdvertisingData(type=product_type, serial_number=serial_number, temperatures=temperatures, mode_id=mode_id, battery_status_virtual_sensors=battery_status_virtual_sensors, hop_count=hop_count)
+        # Bit String
+        bit_string = Bits(data).bin
+
+        return AdvertisingData(type=product_type, serial_number=serial_number, temperatures=temperatures, mode_id=mode_id, battery_status_virtual_sensors=battery_status_virtual_sensors, hop_count=hop_count, bit_string=bit_string)

@@ -138,7 +138,7 @@ class CombustionRSSISensor(CombustionEntity, SensorEntity):
     @callback
     def on_update(self):
         """Process probe updates."""
-        _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
+        _LOGGER.debug("Sensor [%s] with state [%s] has been notified of an update", self.unique_id, self._platform_state)
         if self._platform_state == EntityPlatformState.ADDED:
             self.async_schedule_update_ha_state()
 
@@ -173,6 +173,19 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     def should_poll(self) -> bool:
         """Do not poll for updates."""
         return False
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        """State attributes."""
+        try:
+            raw_bytes = self.probe_manager.probe_data(self.device_serial_number).advertising_data.bit_string
+        except Exception as ex:
+            _LOGGER.warn("Error getting raw bitstring for extra_state_attributes: %s", ex)
+            return {}
+
+        return {
+            "raw_advertisement_bytes": raw_bytes
+        }
 
 class CombustionTemperatureSensor(BaseCombustionTemperatureSensor):
     """Combustion Temperature Sensor class."""
