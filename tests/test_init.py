@@ -49,8 +49,11 @@ async def test_entity_creation(hass: HomeAssistant):
 
     entities = entity_registry.async_entries_for_config_entry(er, entry.entry_id)
     sensors = [e for e in entities if e.domain == 'sensor']
+    disabled_sensors = [e for e in sensors if e.disabled is True]
     binary_sensors = [e for e in entities if e.domain == 'binary_sensor']
 
     assert len(entities) == 13
     assert len(sensors) == 12
+    # 9 disabled by default: 8 temperature sensors, and 1 RSSI sensor
+    assert len(disabled_sensors) == 9
     assert len(binary_sensors) == 1
