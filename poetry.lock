@@ -573,13 +573,13 @@ files = [
 
 [[package]]
 name = "bluetooth-adapters"
-version = "0.16.1"
+version = "0.16.2"
 description = "Tools to enumerate and find Bluetooth Adapters"
 optional = false
 python-versions = ">=3.9,<4.0"
 files = [
-    {file = "bluetooth_adapters-0.16.1-py3-none-any.whl", hash = "sha256:9e4a0f50b80df37f31268d075916217adb0263b6c6b6e51b25935009e69f0bd5"},
-    {file = "bluetooth_adapters-0.16.1.tar.gz", hash = "sha256:01d9fe85e634e1a5c449cc39855aec36bc673a902a2f7c875db736d4ebfd84e1"},
+    {file = "bluetooth_adapters-0.16.2-py3-none-any.whl", hash = "sha256:73ddb5537b2e854c3ffe6c2d07f255849d66d51a508e35b5e9a9d70c4f048a00"},
+    {file = "bluetooth_adapters-0.16.2.tar.gz", hash = "sha256:8919d88bdfad30b13fecf9bd67eb35eca2e096e142bbb6815888524580f33dd7"},
 ]
 
 [package.dependencies]
@@ -587,10 +587,10 @@ aiohttp = ">=3.8.1"
 bleak = ">=0.15.1"
 dbus-fast = ">=1.21.0"
 mac-vendor-lookup = ">=0.1.12"
-usb-devices = ">=0.4.1"
+usb-devices = ">=0.4.5"
 
 [package.extras]
-docs = ["Sphinx (>=5,<7)", "myst-parser (>=0.18,<2.1)", "sphinx-rtd-theme (>=1.0,<2.0)"]
+docs = ["Sphinx (>=5,<8)", "myst-parser (>=0.18,<2.1)", "sphinx-rtd-theme (>=1,<3)"]
 
 [[package]]
 name = "bluetooth-auto-recovery"
@@ -2701,13 +2701,13 @@ zstd = ["zstandard (>=0.18.0)"]
 
 [[package]]
 name = "usb-devices"
-version = "0.4.1"
+version = "0.4.5"
 description = "Tools for mapping, describing, and resetting USB devices"
 optional = false
 python-versions = ">=3.9,<4.0"
 files = [
-    {file = "usb_devices-0.4.1-py3-none-any.whl", hash = "sha256:7a4afd5b7cf2306c8afa52d43bdd8ae9667e32f09e57f12adf048bb490ff3512"},
-    {file = "usb_devices-0.4.1.tar.gz", hash = "sha256:2ad810ba1fd29817d014fe244179fbd06866b92a3285e2bb3a8442f99a8e47b6"},
+    {file = "usb_devices-0.4.5-py3-none-any.whl", hash = "sha256:8a415219ef1395e25aa0bddcad484c88edf9673acdeae8a07223ca7222a01dcf"},
+    {file = "usb_devices-0.4.5.tar.gz", hash = "sha256:9b5c7606df2bc791c6c45b7f76244a0cbed83cb6fa4c68791a143c03345e195d"},
 ]
 
 [[package]]
@@ -3043,4 +3043,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.13"
-content-hash = "15a185b988295eb498d535233f8586b68337fbd10f29108470cb6cdd51275641"
+content-hash = "4cce539e44aa574fa12c518010629adf18ada6657bb1fec19c9b76d810cc5eb9"
