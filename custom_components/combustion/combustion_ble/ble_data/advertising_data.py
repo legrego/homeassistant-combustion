@@ -3,8 +3,6 @@
 from enum import Enum
 from typing import NamedTuple, Optional
 
-from custom_components.combustion.const import LOGGER
-
 from .battery_status_virtual_sensors import BatteryStatusVirtualSensors
 from .hop_count import HopCount
 from .mode_id import ModeId
@@ -36,13 +34,11 @@ class AdvertisingData(NamedTuple):
         from bitstring import Bits
 
         if data is None or len(data) < 20:
-            LOGGER.warn('Not constructing Advertising data because [%s] != 20', len(data))
             return None
 
         # Vendor ID
         vendor_id = int.from_bytes(data[0:2], byteorder='big')
         if vendor_id != 0x09C7:
-            LOGGER.warn("Not constructing Advertising data because [%s] != 0x09C7", vendor_id)
             return None
 
         # Product type
@@ -68,3 +64,10 @@ class AdvertisingData(NamedTuple):
         bit_string = Bits(data).bin
 
         return AdvertisingData(type=product_type, serial_number=serial_number, temperatures=temperatures, mode_id=mode_id, battery_status_virtual_sensors=battery_status_virtual_sensors, hop_count=hop_count, bit_string=bit_string)
+
+    @staticmethod
+    def from_bleak_data(data: bytes) -> Optional['AdvertisingData']:
+        """Create instance from raw Bleak advertising data."""
+
+        vendor_id = 0x09C7.to_bytes(2, 'big')
+        return AdvertisingData.from_data(vendor_id + data)

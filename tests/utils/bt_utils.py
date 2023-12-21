@@ -4,11 +4,14 @@ from unittest.mock import patch
 
 from bitstring import Bits
 from bleak.backends.scanner import AdvertisementData, BLEDevice
-from combustion.combustion_ble.advertising_data import CombustionProductType
-from combustion.combustion_ble.mode_id import ProbeMode
 from homeassistant.components.bluetooth import async_get_advertisement_callback
 from homeassistant.components.bluetooth.models import BluetoothServiceInfoBleak
 from homeassistant.core import HomeAssistant
+
+from custom_components.combustion.combustion_ble.advertising_data import (
+    CombustionProductType,
+)
+from custom_components.combustion.combustion_ble.mode_id import ProbeMode
 
 ADVERTISEMENT_DATA_DEFAULTS = {
     "local_name": "",

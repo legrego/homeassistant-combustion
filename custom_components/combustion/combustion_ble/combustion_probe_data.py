@@ -4,6 +4,8 @@ from __future__ import annotations
 from home_assistant_bluetooth import BluetoothServiceInfoBleak
 from sensor_state_data import description
 
+from custom_components.combustion.combustion_ble.ble_probe import CombustionBLEProbe
+from custom_components.combustion.combustion_ble.probe_status import ProbeStatus
 from custom_components.combustion.const import BT_MANUFACTURER_ID, LOGGER
 
 from .advertising_data import AdvertisingData
@@ -21,9 +23,10 @@ INVALID_PROBE_SERIAL_NUMBER = 0
 class CombustionProbeData:
     """Data for Combustion Probes."""
 
-    def __init__(self, advertising_data: AdvertisingData, rssi: int, address: str) -> None:
+    def __init__(self, advertising_data: AdvertisingData, rssi: int, address: str, probe_status: ProbeStatus = None) -> None:
         """Initialize the class."""
         self.advertising_data = advertising_data
+        self.probe_status = probe_status
         self._rssi = rssi
         self._address = address
 
@@ -118,6 +121,34 @@ class CombustionProbeData:
 
         return (sensor_number, temperature)
 
+    @property
+    def prediction_mode(self) -> str | None:
+        """Return prediction mode."""
+        if self.prediction_status:
+            return self.probe_status.prediction_status.prediction_mode.to_string()
+        return None
+
+    @property
+    def prediction_state(self) -> str | None:
+        """Return prediction state."""
+        if self.prediction_status:
+            return self.probe_status.prediction_status.prediction_state.to_string()
+        return None
+
+    @property
+    def prediction_type(self) -> str | None:
+        """Return prediction type."""
+        if self.prediction_status:
+            return self.probe_status.prediction_status.prediction_type.to_string()
+        return None
+
+    @property
+    def prediction_status(self) -> dict:
+        """Prediction status properties"""
+        if self.probe_status:
+            return self.probe_status.prediction_status.to_dict()
+        return {}
+
     def to_dict(self) -> dict:
         """Convert CombustionProbeData instance to a dictionary."""
         data = {
@@ -139,11 +170,16 @@ class CombustionProbeData:
     @staticmethod
     def from_advertisement(service_info: BluetoothServiceInfoBleak):
         """Create instance from BT advertisement data."""
-        LOGGER.debug("Parsing combustion BLE advertisement data: %s", service_info.as_dict())
-
         vendor_id = 0x09C7.to_bytes(2, 'big')
         data = vendor_id + service_info.manufacturer_data[BT_MANUFACTURER_ID]
         advertising_data = AdvertisingData.from_data(data)
 
         return CombustionProbeData(advertising_data, service_info.rssi, service_info.address)
 
+    @staticmethod
+    def from_probe_status(device: CombustionBLEProbe, probe_status: ProbeStatus):
+        LOGGER.debug("Creating probe data from status: %s")
+        vendor_id = 0x09C7.to_bytes(2, 'big')
+        data = vendor_id + device._service_info.manufacturer_data[BT_MANUFACTURER_ID]
+        advertising_data = AdvertisingData.from_data(data)
+        return CombustionProbeData(advertising_data, device.rssi, device.address, probe_status=probe_status)

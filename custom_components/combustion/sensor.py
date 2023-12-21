@@ -52,6 +52,24 @@ RSSI_SENSOR_DESCRIPTION = SensorEntityDescription(
     entity_registry_enabled_default=False,
 )
 
+PREDICTION_MODE_SENSOR_DESCRIPTION =  SensorEntityDescription(
+    key=f"{SensorDeviceClass.ENUM}_prediction_mode",
+    device_class=SensorDeviceClass.ENUM,
+    options=['None', 'Time to Removal', 'Remove and Resting', 'Reserved', 'unknown']
+)
+
+PREDICTION_STATE_SENSOR_DESCRIPTION =  SensorEntityDescription(
+    key=f"{SensorDeviceClass.ENUM}_prediction_state",
+    device_class=SensorDeviceClass.ENUM,
+    options=['Probe Not Inserted', 'Probe Inserted', 'Cooking', 'Predicting', 'Removal Prediction Done', 'Unknown']
+)
+
+PREDICTION_TYPE_SENSOR_DESCRIPTION =  SensorEntityDescription(
+    key=f"{SensorDeviceClass.ENUM}_prediction_type",
+    device_class=SensorDeviceClass.ENUM,
+    options=['None', 'Removal', 'Resting', 'Reserved', "Unknown"]
+)
+
 SENSOR_DESCRIPTIONS = {
     (
         SensorDeviceClass.TEMPERATURE,
@@ -96,6 +114,18 @@ def _create_temperature_sensors(probe_manager: ProbeManager, probe_data: Combust
 
     return sensors
 
+def _create_prediction_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
+    sensors: list[BaseCombustionPredictionSensor] = [
+        CombustionPredictionModeSensor(probe_manager, probe_data),
+        CombustionPredictionStateSensor(probe_manager, probe_data),
+        CombustionPredictionTypeSensor(probe_manager, probe_data),
+    ]
+
+    for sensor in sensors:
+        sensor.async_init()
+
+    return sensors
+
 def _create_diagnostic_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
     sensors: list[CombustionEntity] = [
         CombustionRSSISensor(probe_manager, probe_data)
@@ -112,6 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     def _create_sensors_callback(pm: ProbeManager, probe_data: CombustionProbeData):
         sensors = _create_temperature_sensors(pm, probe_data)
+        sensors.extend(_create_prediction_sensors(pm, probe_data))
         sensors.extend(_create_diagnostic_sensors(pm, probe_data))
         async_add_entities(sensors)
 
@@ -182,18 +213,88 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
         """Do not poll for updates."""
         return False
 
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """State attributes."""
-        try:
-            raw_bytes = self.probe_manager.probe_data(self.device_serial_number).advertising_data.bit_string
-        except Exception as ex:
-            _LOGGER.warn("Error getting raw bitstring for extra_state_attributes: %s", ex)
-            return {}
+class BaseCombustionPredictionSensor(CombustionEntity, SensorEntity):
+    """Base class for prediction sensors."""
 
-        return {
-            "raw_advertisement_bytes": raw_bytes
-        }
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_data.serial_number)
+        self.device_serial_number = probe_data.serial_number
+        self.probe_manager = probe_manager
+        self._attr_has_entity_name = True
+
+    def async_init(self):
+        """Async initialization."""
+        self.probe_manager.add_update_listener(self.on_update)
+
+    @callback
+    def on_update(self):
+        """Process probe updates."""
+        _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
+        if self._platform_state == EntityPlatformState.ADDED:
+            self.async_schedule_update_ha_state()
+
+    @property
+    def should_poll(self) -> bool:
+        """Do not poll for updates."""
+        return False
+
+class CombustionPredictionModeSensor(BaseCombustionPredictionSensor):
+    """Combustion Prediction Mode class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self._attr_unique_id = f'{probe_data.serial_number}--prediction-mode'
+        self.entity_description = PREDICTION_MODE_SENSOR_DESCRIPTION
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'Prediction Mode'
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        return self.probe_manager.probe_data(self.device_serial_number).prediction_mode
+
+class CombustionPredictionStateSensor(BaseCombustionPredictionSensor):
+    """Combustion Prediction State class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self._attr_unique_id = f'{probe_data.serial_number}--prediction-state'
+        self.entity_description = PREDICTION_STATE_SENSOR_DESCRIPTION
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'Prediction State'
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        return self.probe_manager.probe_data(self.device_serial_number).prediction_state
+
+class CombustionPredictionTypeSensor(BaseCombustionPredictionSensor):
+    """Combustion Prediction Type class."""
+
+    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
+        """Initialize."""
+        super().__init__(probe_manager, probe_data)
+        self._attr_unique_id = f'{probe_data.serial_number}--prediction-type'
+        self.entity_description = PREDICTION_TYPE_SENSOR_DESCRIPTION
+
+    @property
+    def name(self):
+        """Sensor name."""
+        return 'Prediction Type'
+
+    @property
+    def native_value(self) -> str:
+        """Return the native value of the sensor."""
+        return self.probe_manager.probe_data(self.device_serial_number).prediction_type
 
 class CombustionTemperatureSensor(BaseCombustionTemperatureSensor):
     """Combustion Temperature Sensor class."""
