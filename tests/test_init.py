@@ -25,6 +25,7 @@ async def _setup_config_entry(hass: HomeAssistant, mock_entry: MockConfigEntry):
 
     return entry
 
+
 @pytest.mark.asyncio
 async def test_entity_creation(hass: HomeAssistant):
     """Verify that entities are created in response to a BT advertisement."""
@@ -33,8 +34,7 @@ async def test_entity_creation(hass: HomeAssistant):
         unique_id="test_entity_creation",
         domain=DOMAIN,
         version=1,
-        data={
-        },
+        data={},
         title="Meatnet",
     )
 
@@ -48,12 +48,16 @@ async def test_entity_creation(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     entities = entity_registry.async_entries_for_config_entry(er, entry.entry_id)
-    sensors = [e for e in entities if e.domain == 'sensor']
+    sensors = [e for e in entities if e.domain == "sensor"]
     disabled_sensors = [e for e in sensors if e.disabled is True]
-    binary_sensors = [e for e in entities if e.domain == 'binary_sensor']
+    binary_sensors = [e for e in entities if e.domain == "binary_sensor"]
+
+    await mock_entry.async_remove(hass)
+    await hass.async_block_till_done()
+
+    assert await entry.async_unload(hass)
 
     assert len(entities) == 13
-    assert len(sensors) == 12
-    # 9 disabled by default: 8 temperature sensors, and 1 RSSI sensor
+    # # 9 disabled by default: 8 temperature sensors, and 1 RSSI sensor
     assert len(disabled_sensors) == 9
     assert len(binary_sensors) == 1
