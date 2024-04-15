@@ -16,7 +16,7 @@ bluetooth_sensor_state_data = ">=1.6.1"
 colorlog = "==6.8.0"
 homeassistant = "==2023.11.1"
 pip = ">=21.0,<24.1"
-ruff = "==0.1.13"
+ruff = "==0.3.7"
 
 [tool.poetry.group.test.dependencies]
 pytest = ">=7.3.1"
