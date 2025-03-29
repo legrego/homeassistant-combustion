@@ -154,7 +154,11 @@ class CombustionRSSISensor(CombustionEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Return the native value of the sensor."""
-        return self.probe_manager.probe_data(self.device_serial_number).rssi
+        try:
+            return self.probe_manager.probe_data(self.device_serial_number).rssi
+        except Exception as ex:
+            _LOGGER.warning("Error getting rssi for native_value: %s", ex)
+            return "Unknown"
 
 class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     """Base class for temperature sensors."""
@@ -188,7 +192,7 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
         try:
             raw_bytes = self.probe_manager.probe_data(self.device_serial_number).advertising_data.bit_string
         except Exception as ex:
-            _LOGGER.warn("Error getting raw bitstring for extra_state_attributes: %s", ex)
+            _LOGGER.warning("Error getting raw bitstring for extra_state_attributes: %s", ex)
             return {}
 
         return {
@@ -232,15 +236,24 @@ class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
     @property
     def native_value(self) -> str:
         """Return the native value of the sensor."""
-        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
+        try:
+            (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
+        except Exception as ex:
+            _LOGGER.warning("Error getting core_sensor temp for native_value: %s", ex)
+            return "Unknown"
         return temp
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """State attributes."""
-        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
+        try:
+            (thermistor_id, _temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
+        except Exception as ex:
+            _LOGGER.warning("Error getting core_sensor id for extra_state_attributes: %s", ex)
+            return {}
+
         return {
-            "thermistor_id": id
+            "thermistor_id": thermistor_id
         }
 
 class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
@@ -260,15 +273,25 @@ class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
     @property
     def native_value(self) -> str:
         """Return the native value of the sensor."""
-        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
+        try:
+            (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
+        except Exception as ex:
+            _LOGGER.warning("Error getting ambient_sensor temp for extra_state_attributes: %s", ex)
+            return "Unknown"
+
         return temp
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """State attributes."""
-        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
+        try:
+            (thermistor_id, _temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
+        except Exception as ex:
+            _LOGGER.warning("Error getting ambient_sensor id for extra_state_attributes: %s", ex)
+            return {}
+
         return {
-            "thermistor_id": id
+            "thermistor_id": thermistor_id
         }
 
 class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
@@ -288,13 +311,23 @@ class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
     @property
     def native_value(self) -> str:
         """Return the native value of the sensor."""
-        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
+        try:
+            (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
+        except Exception as ex:
+            _LOGGER.warning("Error getting surface_sensor temp for native_value: %s", ex)
+            return "Unknown"
+
         return temp
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """State attributes."""
-        (id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
+        try:
+            (thermistor_id, _temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
+        except Exception as ex:
+            _LOGGER.warning("Error getting surface_sensor id for extra_state_attributes: %s", ex)
+            return {}
+
         return {
-            "thermistor_id": id
+            "thermistor_id": thermistor_id
         }
