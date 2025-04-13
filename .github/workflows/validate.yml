@@ -2,8 +2,8 @@ name: "Validate"
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron:  "0 0 * * *"
+  # schedule:
+  #   - cron:  "0 0 * * *"
   push:
     branches:
       - "main"
@@ -52,6 +52,6 @@ jobs:
       - name: Pytest coverage comment
         uses: MishaKav/pytest-coverage-comment@v1.1.51
         with:
-          github-token: ${{ secrets.ACTION_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           pytest-xml-coverage-path: ./test_results/cov_xml/coverage.xml
           junitxml-path: ./test_results/pytest.xml
