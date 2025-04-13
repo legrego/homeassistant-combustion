@@ -13,7 +13,7 @@ bitstring = "^4.1.4"
 
 [tool.poetry.group.dev.dependencies]
 bluetooth_sensor_state_data = ">=1.6.1"
-colorlog = "==6.8.0"
+colorlog = "==6.9.0"
 homeassistant = "==2023.11.1"
 pip = ">=21.0,<24.1"
 ruff = "==0.11.5"
