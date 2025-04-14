@@ -592,24 +592,25 @@ files = [
 
 [[package]]
 name = "bluetooth-adapters"
-version = "0.18.0"
+version = "0.21.4"
 description = "Tools to enumerate and find Bluetooth Adapters"
 optional = false
-python-versions = ">=3.9,<3.13"
+python-versions = ">=3.9"
 groups = ["test"]
 files = [
-    {file = "bluetooth_adapters-0.18.0-py3-none-any.whl", hash = "sha256:31c560bff8a1688028fc94bc42790bb2738f6de2b5603c08fe9476f8064220b6"},
-    {file = "bluetooth_adapters-0.18.0.tar.gz", hash = "sha256:d2ff76ca3ee7aa27df18e0c233e36e16251bd92225d0c1d5712f07360f607176"},
+    {file = "bluetooth_adapters-0.21.4-py3-none-any.whl", hash = "sha256:ce2e8139cc9d7b103c21654c6309507979e469aae3efebcaeee9923080b0569b"},
+    {file = "bluetooth_adapters-0.21.4.tar.gz", hash = "sha256:a5a809ef7ba95ee673a78704f90ce34612deb3696269d1a6fd61f98642b99dd3"},
 ]
 
 [package.dependencies]
 aiooui = ">=0.1.1"
 bleak = ">=0.21.1"
-dbus-fast = ">=1.21.0"
+dbus-fast = {version = ">=1.21.0", markers = "platform_system == \"Linux\""}
+uart-devices = ">=0.1.0"
 usb-devices = ">=0.4.5"
 
 [package.extras]
-docs = ["Sphinx (>=5,<8)", "myst-parser (>=0.18,<2.1)", "sphinx-rtd-theme (>=1,<3)"]
+docs = ["Sphinx (>=5,<8)", "myst-parser (>=0.18,<3.1)", "sphinx-rtd-theme (>=1,<4)"]
 
 [[package]]
 name = "bluetooth-auto-recovery"
@@ -1050,6 +1051,7 @@ description = "A faster version of dbus-next"
 optional = false
 python-versions = ">=3.7,<4.0"
 groups = ["test"]
+markers = "platform_system == \"Linux\""
 files = [
     {file = "dbus_fast-2.20.0-cp310-cp310-manylinux_2_17_i686.manylinux_2_5_i686.manylinux1_i686.manylinux2014_i686.whl", hash = "sha256:ecf22e22434bdd61bfb8b544eb58f5032b23dda5a7fc233afa1d3c9c3241f0a8"},
     {file = "dbus_fast-2.20.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ed70f4c1fe23c47a59d81c8fd8830c65307a1f089cc92949004df4c65c69f155"},
@@ -2736,6 +2738,18 @@ files = [
 ]
 
 [[package]]
+name = "uart-devices"
+version = "0.1.1"
+description = "UART Devices for Linux"
+optional = false
+python-versions = "<4.0,>=3.9"
+groups = ["test"]
+files = [
+    {file = "uart_devices-0.1.1-py3-none-any.whl", hash = "sha256:55bc8cce66465e90b298f0910e5c496bc7be021341c5455954cf61c6253dc123"},
+    {file = "uart_devices-0.1.1.tar.gz", hash = "sha256:3a52c4ae0f5f7400ebe1ae5f6e2a2d40cc0b7f18a50e895236535c4e53c6ed34"},
+]
+
+[[package]]
 name = "ulid-transform"
 version = "0.9.0"
 description = "Create and transform ULIDs"
@@ -3153,4 +3167,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "c2bf5b6a1d9f039eff4896e86eb15183c233c478564a3c74ffaf06b86df1bf62"
+content-hash = "53739529e61ce3cf1c941604b1fff8d10c2b40a6b5741f6c1cec44ecc98c1208"
