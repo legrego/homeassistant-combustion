@@ -50,7 +50,7 @@ jobs:
         run: |
           poetry run pytest
       - name: Pytest coverage comment
-        uses: MishaKav/pytest-coverage-comment@v1.1.51
+        uses: MishaKav/pytest-coverage-comment@v1.1.53
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pytest-xml-coverage-path: ./test_results/cov_xml/coverage.xml
