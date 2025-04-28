@@ -1818,14 +1818,14 @@ proxy = ["PySocks"]
 
 [[package]]
 name = "pip"
-version = "24.0"
+version = "25.1"
 description = "The PyPA recommended tool for installing Python packages."
 optional = false
-python-versions = ">=3.7"
+python-versions = ">=3.9"
 groups = ["dev", "test"]
 files = [
-    {file = "pip-24.0-py3-none-any.whl", hash = "sha256:ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc"},
-    {file = "pip-24.0.tar.gz", hash = "sha256:ea9bd1a847e8c5774a5777bb398c19e80bcd4e2aa16a4b301b718fe6f593aba2"},
+    {file = "pip-25.1-py3-none-any.whl", hash = "sha256:13b4aa0aaad055020a11bec8a1c2a70a2b2d080e12d89b962266029fff0a16ba"},
+    {file = "pip-25.1.tar.gz", hash = "sha256:272bdd1289f80165e9070a4f881e8f9e1001bbb50378561d1af20e49bf5a2200"},
 ]
 
 [[package]]
@@ -3153,4 +3153,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "c2bf5b6a1d9f039eff4896e86eb15183c233c478564a3c74ffaf06b86df1bf62"
+content-hash = "d1ed4800479b5e207d499b5a4f8e248baf3c718fa96f8ded0d4349a6448c8bcd"
