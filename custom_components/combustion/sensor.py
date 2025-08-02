@@ -158,7 +158,7 @@ class CombustionRSSISensor(CombustionEntity, SensorEntity):
             return self.probe_manager.probe_data(self.device_serial_number).rssi
         except Exception as ex:
             _LOGGER.warning("Error getting rssi for native_value: %s", ex)
-            return "Unknown"
+            return None
 
 class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     """Base class for temperature sensors."""
@@ -240,7 +240,7 @@ class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting core_sensor temp for native_value: %s", ex)
-            return "Unknown"
+            return None
         return temp
 
     @property
@@ -277,7 +277,7 @@ class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting ambient_sensor temp for extra_state_attributes: %s", ex)
-            return "Unknown"
+            return None
 
         return temp
 
@@ -315,7 +315,7 @@ class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting surface_sensor temp for native_value: %s", ex)
-            return "Unknown"
+            return None
 
         return temp
 
