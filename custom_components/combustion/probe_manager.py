@@ -1,5 +1,7 @@
 """Manage discovered predictive probes."""
 
+import time
+
 from homeassistant.core import callback
 
 from custom_components.combustion.bluetooth_listener import BluetoothListener
@@ -10,6 +12,13 @@ from custom_components.combustion.const import LOGGER
 
 _LOGGER = LOGGER.getChild('probe_manager')
 
+# Minimum interval between listener notifications for the same probe.
+# Combustion probes advertise multiple times per second; without throttling,
+# every advertisement triggers state updates for every entity, which floods
+# the websocket and overwhelms the dashboard.
+_MIN_NOTIFY_INTERVAL_SECONDS = 1.0
+
+
 class ProbeManager:
     """Manage discovered predictive probes."""
 
@@ -19,6 +28,7 @@ class ProbeManager:
         self.create_sensors_callback = None
         self.data: dict[str, CombustionProbeData] = {}
         self._listeners = []
+        self._last_notify: dict[str, float] = {}
 
     def init_sensor_platform(self, create_sensors_callback):
         """Initialize sensor platform."""
@@ -42,7 +52,17 @@ class ProbeManager:
                 self.create_sensors_callback(self, probe_data)
                 self.create_binary_sensors_callback(self, probe_data)
 
+            # Always keep the latest data — entity state reads will see fresh values.
             self.data[probe_data.serial_number] = probe_data
+
+            # Rate-limit listener notifications per probe. Combustion probes
+            # advertise several times per second; entities only need to be
+            # re-rendered ~1Hz for cooking purposes.
+            now = time.monotonic()
+            last = self._last_notify.get(probe_data.serial_number, 0.0)
+            if now - last < _MIN_NOTIFY_INTERVAL_SECONDS:
+                return
+            self._last_notify[probe_data.serial_number] = now
 
             _LOGGER.debug("Notifying listeners of new data for [%s]", probe_data.serial_number)
             for listener in self._listeners:
@@ -54,6 +74,6 @@ class ProbeManager:
         """Add listener to be notified of probe updates."""
         self._listeners.append(listener)
 
-    def probe_data(self, serial_number: str) -> CombustionProbeData:
-        """Probe data for provided serial number."""
-        return self.data[serial_number]
+    def probe_data(self, serial_number: str) -> CombustionProbeData | None:
+        """Probe data for provided serial number, or None if not yet seen."""
+        return self.data.get(serial_number)
