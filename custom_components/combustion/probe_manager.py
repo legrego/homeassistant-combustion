@@ -54,6 +54,6 @@ class ProbeManager:
         """Add listener to be notified of probe updates."""
         self._listeners.append(listener)
 
-    def probe_data(self, serial_number: str) -> CombustionProbeData:
-        """Probe data for provided serial number."""
-        return self.data[serial_number]
+    def probe_data(self, serial_number: str) -> CombustionProbeData | None:
+        """Probe data for provided serial number, or None if not yet seen."""
+        return self.data.get(serial_number)

@@ -152,13 +152,13 @@ class CombustionRSSISensor(CombustionEntity, SensorEntity):
             self.async_schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> int | None:
         """Return the native value of the sensor."""
         try:
             return self.probe_manager.probe_data(self.device_serial_number).rssi
         except Exception as ex:
             _LOGGER.warning("Error getting rssi for native_value: %s", ex)
-            return "Unknown"
+            return None
 
 class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     """Base class for temperature sensors."""
@@ -215,9 +215,13 @@ class CombustionTemperatureSensor(BaseCombustionTemperatureSensor):
         return f'Temperature {self.thermistor_id}'
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> float | None:
         """Return the native value of the sensor."""
-        return self.probe_manager.probe_data(self.device_serial_number).temperature_data[self.thermistor_id - 1]
+        try:
+            return self.probe_manager.probe_data(self.device_serial_number).temperature_data[self.thermistor_id - 1]
+        except Exception as ex:
+            _LOGGER.warning("Error getting thermistor %s temp for native_value: %s", self.thermistor_id, ex)
+            return None
 
 class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
     """Combustion virtual core sensor class."""
@@ -234,13 +238,13 @@ class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
         return 'Core Temperature'
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> float | None:
         """Return the native value of the sensor."""
         try:
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting core_sensor temp for native_value: %s", ex)
-            return "Unknown"
+            return None
         return temp
 
     @property
@@ -271,13 +275,13 @@ class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
         return 'Ambient Temperature'
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> float | None:
         """Return the native value of the sensor."""
         try:
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
         except Exception as ex:
-            _LOGGER.warning("Error getting ambient_sensor temp for extra_state_attributes: %s", ex)
-            return "Unknown"
+            _LOGGER.warning("Error getting ambient_sensor temp for native_value: %s", ex)
+            return None
 
         return temp
 
@@ -309,13 +313,13 @@ class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
         return 'Surface Temperature'
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> float | None:
         """Return the native value of the sensor."""
         try:
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting surface_sensor temp for native_value: %s", ex)
-            return "Unknown"
+            return None
 
         return temp
 

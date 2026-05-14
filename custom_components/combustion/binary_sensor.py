@@ -70,7 +70,11 @@ class CombustionBatterySensor(CombustionEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the battery is low."""
-        return not self.probe_manager.probe_data(self.device_serial_number).battery_ok
+        try:
+            return not self.probe_manager.probe_data(self.device_serial_number).battery_ok
+        except Exception as ex:
+            _LOGGER.warning("Error getting battery_ok for is_on: %s", ex)
+            return None
 
     @callback
     def on_update(self):
