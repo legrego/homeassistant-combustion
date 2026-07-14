@@ -8,6 +8,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityPlatformState
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from custom_components.combustion.combustion_ble.combustion_probe_data import (
@@ -58,10 +59,6 @@ class CombustionBatterySensor(CombustionEntity, BinarySensorEntity):
         self._attr_unique_id = f'{probe_data.serial_number}--battery'
         self.entity_description = BATTERY_DESCRIPTION
 
-    def async_init(self):
-        """Async initialization."""
-        self.probe_manager.add_update_listener(self.on_update)
-
     @property
     def name(self):
         """Sensor name."""
@@ -76,7 +73,8 @@ class CombustionBatterySensor(CombustionEntity, BinarySensorEntity):
     def on_update(self):
         """Process probe updates."""
         _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
-        self.async_schedule_update_ha_state()
+        if self._platform_state == EntityPlatformState.ADDED:
+            self.async_schedule_update_ha_state()
 
     @property
     def should_poll(self) -> bool:

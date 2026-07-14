@@ -91,18 +91,12 @@ def _create_temperature_sensors(probe_manager: ProbeManager, probe_data: Combust
     for i in range(len(probe_data.temperature_data)):
         sensors.append(CombustionTemperatureSensor(probe_manager, probe_data, i + 1))
 
-    for sensor in sensors:
-        sensor.async_init()
-
     return sensors
 
 def _create_diagnostic_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
     sensors: list[CombustionEntity] = [
         CombustionRSSISensor(probe_manager, probe_data)
     ]
-
-    for sensor in sensors:
-        sensor.async_init()
 
     return sensors
 
@@ -130,10 +124,6 @@ class CombustionRSSISensor(CombustionEntity, SensorEntity):
         self._attr_unique_id = f'{probe_data.serial_number}--rssi'
         self.entity_description = RSSI_SENSOR_DESCRIPTION
 
-    def async_init(self):
-        """Async initialization."""
-        self.probe_manager.add_update_listener(self.on_update)
-
     @property
     def should_poll(self) -> bool:
         """Do not poll for updates."""
@@ -158,7 +148,7 @@ class CombustionRSSISensor(CombustionEntity, SensorEntity):
             return self.probe_manager.probe_data(self.device_serial_number).rssi
         except Exception as ex:
             _LOGGER.warning("Error getting rssi for native_value: %s", ex)
-            return "Unknown"
+            return None
 
 class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
     """Base class for temperature sensors."""
@@ -169,10 +159,6 @@ class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
         self.device_serial_number = probe_data.serial_number
         self.probe_manager = probe_manager
         self._attr_has_entity_name = True
-
-    def async_init(self):
-        """Async initialization."""
-        self.probe_manager.add_update_listener(self.on_update)
 
     @callback
     def on_update(self):
@@ -240,7 +226,7 @@ class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting core_sensor temp for native_value: %s", ex)
-            return "Unknown"
+            return None
         return temp
 
     @property
@@ -276,8 +262,8 @@ class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
         try:
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
         except Exception as ex:
-            _LOGGER.warning("Error getting ambient_sensor temp for extra_state_attributes: %s", ex)
-            return "Unknown"
+            _LOGGER.warning("Error getting ambient_sensor temp for native_value: %s", ex)
+            return None
 
         return temp
 
@@ -315,7 +301,7 @@ class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
             (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
         except Exception as ex:
             _LOGGER.warning("Error getting surface_sensor temp for native_value: %s", ex)
-            return "Unknown"
+            return None
 
         return temp
 

@@ -37,12 +37,16 @@ class ProbeManager:
         @callback
         def update(probe_data: CombustionProbeData):
             """Handle updated data from predictive probe."""
-            if probe_data.serial_number not in self.data:
+            is_new = probe_data.serial_number not in self.data
+            # Store the data before creating entities: entity platforms read
+            # probe_data during async_add_entities, and a KeyError there makes
+            # the platform reject the entity and retry the add forever.
+            self.data[probe_data.serial_number] = probe_data
+
+            if is_new:
                 _LOGGER.debug("Adding sensors for new device [%s]", probe_data.serial_number)
                 self.create_sensors_callback(self, probe_data)
                 self.create_binary_sensors_callback(self, probe_data)
-
-            self.data[probe_data.serial_number] = probe_data
 
             _LOGGER.debug("Notifying listeners of new data for [%s]", probe_data.serial_number)
             for listener in self._listeners:
@@ -51,8 +55,17 @@ class ProbeManager:
         return update
 
     def add_update_listener(self, listener):
-        """Add listener to be notified of probe updates."""
+        """Add listener to be notified of probe updates.
+
+        Returns a callable that removes the listener again.
+        """
         self._listeners.append(listener)
+
+        def _remove_listener():
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return _remove_listener
 
     def probe_data(self, serial_number: str) -> CombustionProbeData:
         """Probe data for provided serial number."""

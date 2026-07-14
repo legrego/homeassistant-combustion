@@ -47,6 +47,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    """Reload config entry.
+
+    This must go through hass.config_entries so the entry's async_on_unload
+    callbacks run (bluetooth callback deregistration, update listener
+    disposal) and reloads are serialized. Calling async_unload_entry /
+    async_setup_entry directly skips both, leaking one bluetooth callback and
+    one update listener per reload; the leaked update listeners then multiply
+    on every entry update.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)

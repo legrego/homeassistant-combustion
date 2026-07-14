@@ -48,7 +48,16 @@ class BluetoothListener:
             _LOGGER.debug("Discarding advertisement; HASS is stopping")
             return
 
-        probe_data = CombustionProbeData.from_advertisement(service_info)
+        try:
+            probe_data = CombustionProbeData.from_advertisement(service_info)
+        except Exception:  # noqa: BLE001
+            # Newer Combustion products (Gauge, Display, Booster, Engine)
+            # advertise with product types this parser does not know; a parse
+            # failure must not raise into the bluetooth manager on every
+            # advertisement.
+            _LOGGER.debug("Ignoring unparseable advertisement from [%s]", service_info.address, exc_info=True)
+            return
+
         if not probe_data.valid:
             _LOGGER.debug("Discarding invalid advertisement from [%s]", service_info.address)
             return
