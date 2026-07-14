@@ -90,7 +90,7 @@ def inject_bt_advertisement(hass: HomeAssistant, service_info: BluetoothServiceI
     """Inject a BT advertisement into HASS."""
     async_get_advertisement_callback(hass)(service_info)
 
-def create_advertisement(combustion_bits):
+def create_advertisement(combustion_bits, connectable=True):
     """Create a BT advertisement."""
     adv = generate_advertisement_data(
         manufacturer_data={2503: combustion_bits},
@@ -114,7 +114,7 @@ def create_advertisement(combustion_bits):
         ],
         source='B8:27:EB:EA:98:17',
         advertisement=adv,
-        connectable=True,
+        connectable=connectable,
         time=0,
     )
 

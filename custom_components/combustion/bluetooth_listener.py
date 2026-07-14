@@ -31,7 +31,13 @@ class BluetoothListener:
             bluetooth.async_register_callback(
                 self.hass,
                 self._bt_callback,
-                bluetooth.BluetoothCallbackMatcher(manufacturer_id=BT_MANUFACTURER_ID),
+                # connectable=False means "a connection is not required":
+                # it matches BOTH connectable and non-connectable sources.
+                # The default (True) silently drops advertisements relayed by
+                # passive bluetooth proxies such as Shelly devices, which
+                # always report connectable=False. This integration only
+                # reads advertisement broadcasts and never connects.
+                bluetooth.BluetoothCallbackMatcher(manufacturer_id=BT_MANUFACTURER_ID, connectable=False),
                 bluetooth.BluetoothScanningMode.ACTIVE
             )
         )

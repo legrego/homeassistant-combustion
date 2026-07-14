@@ -57,3 +57,32 @@ async def test_entity_creation(hass: HomeAssistant):
     # 9 disabled by default: 8 temperature sensors, and 1 RSSI sensor
     assert len(disabled_sensors) == 9
     assert len(binary_sensors) == 1
+
+
+@pytest.mark.asyncio
+async def test_entity_creation_non_connectable(hass: HomeAssistant):
+    """Advertisements relayed by passive bluetooth proxies must be processed.
+
+    Passive proxies (e.g. Shelly devices) deliver advertisements with
+    connectable=False; a callback matcher without connectable=False never
+    sees them, so probes are silently ignored on proxy-only installations.
+    """
+
+    mock_entry = MockConfigEntry(
+        unique_id="test_entity_creation_non_connectable",
+        domain=DOMAIN,
+        version=1,
+        data={
+        },
+        title="Meatnet",
+    )
+
+    entry = await _setup_config_entry(hass, mock_entry)
+
+    er = entity_registry.async_get(hass)
+
+    inject_bt_advertisement(hass, create_advertisement(create_combustion_bits(), connectable=False))
+    await hass.async_block_till_done()
+
+    entities = entity_registry.async_entries_for_config_entry(er, entry.entry_id)
+    assert len(entities) == 13

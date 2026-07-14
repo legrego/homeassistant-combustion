@@ -3,7 +3,8 @@
   "name": "Combustion",
   "bluetooth": [
     {
-      "manufacturer_id": 2503
+      "manufacturer_id": 2503,
+      "connectable": false
     }
   ],
   "codeowners": [
