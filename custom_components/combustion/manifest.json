@@ -17,8 +17,6 @@
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/legrego/homeassistant-combustion/issues",
-  "requirements": [
-    "bitstring==4.1.4"
-  ],
+  "requirements": [],
   "version": "0.0.0"
 }

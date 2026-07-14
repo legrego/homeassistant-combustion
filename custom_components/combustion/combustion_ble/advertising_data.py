@@ -33,8 +33,6 @@ class AdvertisingData(NamedTuple):
     @staticmethod
     def from_data(data: bytes) -> Optional['AdvertisingData']:
         """Create instance from raw advertising data."""
-        from bitstring import Bits
-
         if data is None or len(data) < 20:
             LOGGER.warn('Not constructing Advertising data because [%s] != 20', len(data))
             return None
@@ -65,6 +63,6 @@ class AdvertisingData(NamedTuple):
         hop_count = HopCount.from_network_info_byte(data[22]) if len(data) >= 23 else HopCount.default_values()
 
         # Bit String
-        bit_string = Bits(data).bin
+        bit_string = ''.join(format(byte, '08b') for byte in data)
 
         return AdvertisingData(type=product_type, serial_number=serial_number, temperatures=temperatures, mode_id=mode_id, battery_status_virtual_sensors=battery_status_virtual_sensors, hop_count=hop_count, bit_string=bit_string)
