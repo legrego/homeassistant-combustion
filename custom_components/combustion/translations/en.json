@@ -7,6 +7,11 @@
         },
         "error": {
             "unknown": "Unknown error occurred."
+        },
+        "abort": {
+            "no_devices_found": "No supported Combustion probes were found. Turn on a probe, ensure it is within Bluetooth range of Home Assistant, and try again.",
+            "already_configured": "Combustion is already configured.",
+            "already_in_progress": "Combustion setup is already in progress. Complete the pending setup on the Devices & services page."
         }
     }
 }

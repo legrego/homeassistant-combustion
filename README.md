@@ -28,6 +28,8 @@ Platform | Description
 
 There is currently no configuration required for this integration. Once the integration discovers your Combustion device(s), it will prompt you to add them on the Integrations page.
 
+You can also select **Settings → Devices & services → Add integration → Combustion**. Manual setup uses supported probes already discovered by Home Assistant Bluetooth and asks you to confirm before adding the integration. If no probes are found, turn on a probe, bring it within Bluetooth range, wait for an advertisement, and try again. Only one Combustion Meatnet entry is needed for all probes.
+
 ## Supported devices
 
 This integration supports reading temperature and battery data from Combustion's [Predictive Thermometer](https://combustion.inc/products/predictive-thermometer).
