@@ -4,13 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant import config_entries
+from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
 from custom_components.combustion.combustion_ble.combustion_probe_data import (
     CombustionProbeData,
 )
 
-from .const import CONF_DEVICES, DOMAIN, LOGGER
+from .const import BT_MANUFACTURER_ID, CONF_DEVICES, DOMAIN, LOGGER
 
 
 def format_unique_id(address: str) -> str:
@@ -25,6 +26,33 @@ class CombustionFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._discovered_adv: CombustionProbeData | None = None
         self._all_discovered_devices: dict[str, CombustionProbeData] = {}
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Set up from supported probes in the Bluetooth discovery cache."""
+        await self.async_set_unique_id("combustion_meatnet")
+        self._abort_if_unique_id_configured()
+
+        for discovery_info in bluetooth.async_discovered_service_info(
+            self.hass, connectable=False
+        ):
+            if BT_MANUFACTURER_ID not in discovery_info.manufacturer_data:
+                continue
+            try:
+                data = CombustionProbeData.from_advertisement(discovery_info)
+                if not data.valid:
+                    continue
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                # The cache can contain unsupported products or incomplete packets.
+                continue
+            self._all_discovered_devices[discovery_info.address] = data
+            self._discovered_adv = data
+
+        if self._discovered_adv is None:
+            return self.async_abort(reason="no_devices_found")
+
+        return await self.async_step_confirm()
 
     async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak) -> config_entries.FlowResult:
         """Bluetooth discovery step."""
