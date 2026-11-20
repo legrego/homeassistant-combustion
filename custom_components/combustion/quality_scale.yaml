@@ -69,19 +69,39 @@ rules:
     status: done
     comment: A single MeatNet unique ID and duplicate checks in both entry points prevent multiple entries for the same network.
 
-  # Higher tiers have not been assessed as part of this Bronze checklist.
   # Silver
-  action-exceptions: todo
-  config-entry-unloading: todo
-  docs-configuration-parameters: todo
-  docs-installation-parameters: todo
-  entity-unavailable: todo
-  integration-owner: todo
-  log-when-unavailable: todo
-  parallel-updates: todo
-  reauthentication-flow: todo
-  test-coverage: todo
+  action-exceptions:
+    status: exempt
+    comment: The integration registers no actions and only provides read-only sensor and binary_sensor platforms.
+  config-entry-unloading:
+    status: done
+    comment: async_unload_entry unloads both platforms; unload callbacks remove Bluetooth, timer, and platform listeners. Tests cover unloading and reloading with existing and newly discovered devices.
+  docs-configuration-parameters:
+    status: exempt
+    comment: There is no options flow. README.md explains that no settings are required.
+  docs-installation-parameters:
+    status: exempt
+    comment: Setup only asks for confirmation, with no input parameters. README.md documents this setup flow.
+  entity-unavailable:
+    status: done
+    comment: CombustionEntity.available follows MeatNet device availability. Tests verify expiry after 15 seconds and automatic recovery when advertisements resume.
+  integration-owner:
+    status: done
+    comment: The manifest lists @legrego as the integration owner.
+  log-when-unavailable:
+    status: done
+    comment: The coordinator logs at info level once per availability transition. Tests verify one unavailable message and one recovery message despite repeated updates.
+  parallel-updates:
+    status: done
+    comment: Both read-only platforms set PARALLEL_UPDATES to 0; entities only update from pushed advertisements.
+  reauthentication-flow:
+    status: exempt
+    comment: Passive Bluetooth advertisements require no authentication or credentials.
+  test-coverage:
+    status: done
+    comment: Tests cover more than 95% of every integration module, including branches. CI enforces this per module and retains 100% coverage for config_flow.py.
 
+  # Higher tiers have not been assessed.
   # Gold
   devices: todo
   diagnostics: todo

@@ -68,11 +68,12 @@ Use `./scripts/test` to run the tests. Arguments are passed to pytest:
 poetry run ./scripts/test
 ```
 
-The Bronze quality rules require full config flow coverage. Tests measure both lines and branches;
-CI enforces 100% for `config_flow.py`. After running the tests, check it locally with:
+The Bronze quality rules require full config flow coverage, and Silver requires more than 95%
+coverage in every integration module. Tests measure both lines and branches; CI enforces these
+thresholds per module, including 100% for `config_flow.py`. After running the tests, check locally with:
 
 ```sh
-poetry run coverage report --include="*/combustion/config_flow.py" --fail-under=100
+poetry run python scripts/check_coverage.py
 ```
 
 Track quality rules and exemption reasons in
