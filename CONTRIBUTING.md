@@ -68,6 +68,17 @@ Use `./scripts/test` to run the tests. Arguments are passed to pytest:
 poetry run ./scripts/test
 ```
 
+The Bronze quality rules require full config flow coverage. Tests measure both lines and branches;
+CI enforces 100% for `config_flow.py`. After running the tests, check it locally with:
+
+```sh
+poetry run coverage report --include="*/combustion/config_flow.py" --fail-under=100
+```
+
+Track quality rules and exemption reasons in
+[`quality_scale.yaml`](custom_components/combustion/quality_scale.yaml). This is a self-assessment
+against Home Assistant's rules; the integration remains a custom integration.
+
 ### Linting
 Use `./scripts/lint` to format the code and fix lint errors:
 

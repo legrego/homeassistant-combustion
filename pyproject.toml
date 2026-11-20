@@ -40,6 +40,7 @@ requires-poetry = ">=2.2,<3"
 
 [tool.coverage.run]
 source = ["custom_components/combustion"]
+branch = true
 
 [tool.coverage.html]
 directory = "test_results/cov_html"

@@ -1,0 +1,111 @@
+# Self-assessment for this custom integration, not an official Home Assistant rating.
+# Rule definitions: https://contributors.home-assistant.io/core/quality-scale/rules/
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: The integration does not register actions.
+  appropriate-polling:
+    status: exempt
+    comment: Readings are pushed by Bluetooth advertisements. The expiry timer only checks cached data and device availability.
+  brands:
+    status: done
+    comment: Icons and logos are in brand/ and https://github.com/home-assistant/brands/tree/master/custom_integrations/combustion.
+  common-modules:
+    status: done
+    comment: Shared Bluetooth handling is in coordinator.py and the base entity is in entity.py.
+  config-flow:
+    status: done
+    comment: Manual setup and Bluetooth discovery share a confirmation flow; no configuration fields are needed.
+  config-flow-test-coverage:
+    status: done
+    comment: Tests cover setup, discovery, invalid advertisements, and duplicate entries. CI requires 100% line and branch coverage of config_flow.py.
+  dependency-transparency:
+    status: done
+    comment: >-
+      combustion_ble is Apache-2.0 licensed and published on PyPI.
+      The pinned v0.4.1 tag matches commit d97c3a9eb10ddfc94acd528c3144417b63ef5b85
+      from the successful public build and PyPI publishing run
+      https://github.com/legrego/combustion_ble/actions/runs/44814081804.
+      Source and license: https://github.com/legrego/combustion_ble/tree/v0.4.1.
+      Package: https://pypi.org/project/combustion-ble/0.4.1/.
+  docs-actions:
+    status: exempt
+    comment: The integration does not provide actions; README.md explains using its entities in standard automations.
+  docs-conditions:
+    status: exempt
+    comment: The integration does not provide custom conditions.
+  docs-high-level-description:
+    status: done
+    comment: README.md describes Combustion thermometers, gauges, and the passive Bluetooth integration.
+  docs-installation-instructions:
+    status: done
+    comment: README.md covers Bluetooth prerequisites, installing the custom component, discovery, and manual UI setup.
+  docs-removal-instructions:
+    status: done
+    comment: README.md explains deleting the integration and removing manually installed files.
+  docs-triggers:
+    status: exempt
+    comment: The integration does not provide custom triggers.
+  entity-event-setup:
+    status: done
+    comment: CombustionEntity subscribes in async_added_to_hass and registers the unsubscribe callback with async_on_remove.
+  entity-unique-id:
+    status: done
+    comment: Each entity ID combines a device serial number and an entity description key; tests preserve existing IDs.
+  has-entity-name:
+    status: done
+    comment: CombustionEntity sets has_entity_name; names come from translation keys or device classes.
+  runtime-data:
+    status: done
+    comment: A typed CombustionConfigEntry stores its coordinator in entry.runtime_data.
+  test-before-configure:
+    status: exempt
+    comment: Devices are discovered at runtime without user-supplied connection details. This passive listener makes no device connections; discovery advertisements are validated before confirmation.
+  test-before-setup:
+    status: exempt
+    comment: There is no device connection or configuration to validate during setup. The integration subscribes to Home Assistant Bluetooth and adds devices as advertisements arrive, including after startup.
+  unique-config-entry:
+    status: done
+    comment: A single MeatNet unique ID and duplicate checks in both entry points prevent multiple entries for the same network.
+
+  # Higher tiers have not been assessed as part of this Bronze checklist.
+  # Silver
+  action-exceptions: todo
+  config-entry-unloading: todo
+  docs-configuration-parameters: todo
+  docs-installation-parameters: todo
+  entity-unavailable: todo
+  integration-owner: todo
+  log-when-unavailable: todo
+  parallel-updates: todo
+  reauthentication-flow: todo
+  test-coverage: todo
+
+  # Gold
+  devices: todo
+  diagnostics: todo
+  discovery: todo
+  discovery-update-info: todo
+  docs-data-update: todo
+  docs-examples: todo
+  docs-known-limitations: todo
+  docs-supported-devices: todo
+  docs-supported-functions: todo
+  docs-troubleshooting: todo
+  docs-use-cases: todo
+  dynamic-devices: todo
+  entity-category: todo
+  entity-device-class: todo
+  entity-disabled-by-default: todo
+  entity-translations: todo
+  exception-translations: todo
+  icon-translations: todo
+  reconfiguration-flow: todo
+  repair-issues: todo
+  stale-devices: todo
+
+  # Platinum
+  async-dependency: todo
+  inject-websession: todo
+  strict-typing: todo

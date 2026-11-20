@@ -19,18 +19,30 @@ Requires Home Assistant 2026.10.4 or newer.
 
 ## Installation
 
-1. Using the tool of choice open the directory (folder) for your HA configuration (where you find `configuration.yaml`).
-1. If you do not have a `custom_components` directory (folder) there, you need to create it.
-1. In the `custom_components` directory (folder) create a new folder called `combustion`.
-1. Download _all_ the files from the `custom_components/combustion/` directory (folder) in this repository.
-1. Place the files you downloaded in the new directory (folder) you created.
-1. Restart Home Assistant
-1. Ensure you have a Combustion device turned on, and within bluetooth range of Home Assistant .
-1. In the HA UI go to "Configuration" -> "Integrations" to see your discovered Combustion device.
+### Prerequisites
+
+- Home Assistant 2026.10.4 or newer.
+- Home Assistant's [Bluetooth integration](https://www.home-assistant.io/integrations/bluetooth/) set up with a supported adapter or Bluetooth proxy.
+- A supported Combustion device, or a MeatNet repeater relaying it, within Bluetooth range of that adapter or proxy. Take probes out of their chargers so they broadcast.
+
+### Install the files
+
+1. Download this repository and copy the entire `custom_components/combustion` folder, including its subfolders, into your Home Assistant configuration directory (the directory containing `configuration.yaml`). Create `custom_components` if it does not exist.
+1. Restart Home Assistant.
+
+### Set up in Home Assistant
+
+1. Go to **Settings** > **Devices & services**.
+1. If **Combustion** appears under **Discovered**, select **Add** and confirm setup.
+1. Otherwise, select **Add integration**, search for **Combustion**, select it, and confirm setup.
+
+One setup covers every Combustion device in range. New devices are added automatically as they are heard. Manual setup can finish before a device is broadcasting; entities appear once Home Assistant receives its advertisements.
 
 ## Configuration
 
-There is no configuration. Once Home Assistant hears a Combustion device, it offers to set up the integration on the Integrations page. You can also add it from there yourself. One setup covers every Combustion device in range, and new devices are added automatically as they are heard.
+No address, account, credentials, or other settings are required. The integration listens for advertisements through Home Assistant's Bluetooth integration.
+
+The integration provides sensor entities. It does not define its own actions, triggers, or conditions; you can use the entities with Home Assistant's standard state and numeric state automation triggers and conditions.
 
 ## Supported devices
 
