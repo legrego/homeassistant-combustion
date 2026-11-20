@@ -1,18 +1,12 @@
-"""Constants for combustion."""
+"""Constants for the Combustion integration."""
+
 from logging import Logger, getLogger
 
 LOGGER: Logger = getLogger(__package__)
 
-NAME = "Combustion"
 DOMAIN = "combustion"
+NAME = "Combustion MeatNet"
 MANUFACTURER = "Combustion, Inc."
-DEVICE_NAME = "Predictive Thermometer"
-VERSION = "0.0.0"
-ATTRIBUTION = ""
 
-BT_MANUFACTURER_ID = 2503
-
-CONF_DEVICES = "devices"
-
-PRODUCT_TYPE_PROBE = 1
-PRODUCT_TYPE_REPEATER_NODE = 2
+# A single config entry covers every Combustion device in range, so it has a fixed unique ID.
+MEATNET_UNIQUE_ID = "combustion_meatnet"

@@ -52,41 +52,34 @@ Visual Studio Code is the recommended code editor for this project.
 This project includes a [devcontainer](./.devcontainer) configuration for an easy to use and consistent development environment. With this container you will have a stand alone Home Assistant instance running and already configured with the included [`configuration.yaml`](./config/configuration.yaml) file.
 
 ### Dependency management
-Dependencies are managed via [Poetry](https://python-poetry.org). This will be managed for you automatically if using the dev container. If you wish to run outside of a dev container, you will need to install your dependencies manually:
+Dependencies are managed with [Poetry](https://python-poetry.org) 2.2 or newer, and need Python 3.14. The dev container sets this up for you. Outside the dev container, install Poetry and the dependencies yourself:
 
 ```sh
-pip install poetry~=1.7
+pipx install poetry
 poetry install
 ```
 
+The Home Assistant version in `pyproject.toml` must match the `homeassistant` key in `hacs.json`, and the `combustion_ble` version must match `requirements` in `custom_components/combustion/manifest.json`.
+
 ### Running tests
-Use `./scripts/test` to invoke the test runner. You must be within the virtual environment where project dependencies are installed:
+Use `./scripts/test` to run the tests. Arguments are passed to pytest:
 
 ```sh
 poetry run ./scripts/test
 ```
 
-Alternatively:
-
-```sh
-poetry shell
-# you now have a shell within the virtual env
-./scripts/test
-```
-
 ### Linting
-Use `./scripts/lint` to invoke the project linter. You must be within the virtual environment where project dependencies are installed:
+Use `./scripts/lint` to format the code and fix lint errors:
 
 ```sh
 poetry run ./scripts/lint
 ```
 
-Alternatively:
+### Running Home Assistant
+Use `./scripts/develop` to start Home Assistant with the integration and the configuration in [`config/configuration.yaml`](./config/configuration.yaml):
 
 ```sh
-poetry shell
-# you now have a shell within the virtual env
-./scripts/lint
+poetry run ./scripts/develop
 ```
 
 ## License

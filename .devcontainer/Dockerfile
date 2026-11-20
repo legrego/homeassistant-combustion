@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/python:3.11-bullseye
+FROM mcr.microsoft.com/devcontainers/python:3.14
 
 # Install Poetry for dependency management
-RUN pip install poetry~=1.7
+RUN pipx install "poetry>=2.2,<3"

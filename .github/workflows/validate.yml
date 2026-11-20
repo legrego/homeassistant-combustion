@@ -11,13 +11,16 @@ on:
     branches:
       - "main"
 
+permissions:
+  contents: read
+
 jobs:
   hassfest: # https://developers.home-assistant.io/blog/2020/04/16/hassfest
     name: "Hassfest Validation"
     runs-on: "ubuntu-latest"
     steps:
         - name: "Checkout the repository"
-          uses: "actions/checkout@v4"
+          uses: "actions/checkout@v7"
 
         - name: "Run hassfest validation"
           uses: "home-assistant/actions/hassfest@master"
@@ -27,7 +30,7 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
         - name: "Checkout the repository"
-          uses: "actions/checkout@v4"
+          uses: "actions/checkout@v7"
 
         - name: "Run HACS validation"
           uses: "hacs/action@main"
@@ -37,20 +40,26 @@ jobs:
   tests:
     runs-on: "ubuntu-latest"
     name: Run tests
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Check out code from GitHub
-        uses: "actions/checkout@v4"
+        uses: "actions/checkout@v7"
+      - name: Install Poetry
+        run: pipx install "poetry>=2.2,<3"
       - name: Setup Python
-        uses: "actions/setup-python@v5"
+        uses: "actions/setup-python@v7"
         with:
-          python-version: "3.11"
+          python-version: "3.14"
+          cache: "poetry"
       - name: Install requirements
-        run: python3 -m pip install poetry~=1.7 && poetry install
+        run: poetry install
       - name: Run tests
-        run: |
-          poetry run pytest
+        run: poetry run pytest
       - name: Pytest coverage comment
-        uses: MishaKav/pytest-coverage-comment@v1.1.51
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: MishaKav/pytest-coverage-comment@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pytest-xml-coverage-path: ./test_results/cov_xml/coverage.xml

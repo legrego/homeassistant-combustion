@@ -8,22 +8,31 @@ on:
     branches:
       - "main"
 
+permissions:
+  contents: read
+
 jobs:
   ruff:
     name: "Ruff"
     runs-on: "ubuntu-latest"
     steps:
-        - name: "Checkout the repository"
-          uses: "actions/checkout@v4"
+      - name: "Checkout the repository"
+        uses: "actions/checkout@v7"
 
-        - name: "Set up Python"
-          uses: actions/setup-python@v5
-          with:
-            python-version: "3.11"
-            cache: "pip"
+      - name: "Install Poetry"
+        run: pipx install "poetry>=2.2,<3"
 
-        - name: "Install requirements"
-          run: python3 -m pip install poetry~=1.7 && poetry install
+      - name: "Set up Python"
+        uses: "actions/setup-python@v7"
+        with:
+          python-version: "3.14"
+          cache: "poetry"
 
-        - name: "Run"
-          run: poetry run ./scripts/lint
+      - name: "Install requirements"
+        run: poetry install --only lint
+
+      - name: "Check formatting"
+        run: poetry run ruff format --check .
+
+      - name: "Lint"
+        run: poetry run ruff check --output-format=github .

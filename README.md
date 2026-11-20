@@ -1,17 +1,21 @@
 # 🔥 Combustion BLE Integration
 
-Integrate [Combustion](https://combustion.inc) predictive probes into Home Assistant.
+Integrate [Combustion](https://combustion.inc) Predictive Thermometers and Giant Grill Gauges into Home Assistant.
 
 [![GitHub Release][releases-shield]][releases]
 [![License][license-shield]](LICENSE)
 ![Project Maintenance][maintenance-shield]
 
-**This integration will set up the following platforms.**
+**This integration will set up the following entities.**
 
-Platform | Description
+Device | Entities
 -- | --
-`binary_sensor` | Show battery status from probes on your Meatnet.
-`sensor` | Show temperature data from probes on your Meatnet.
+Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default).
+Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
+
+The integration only listens to Bluetooth advertisements. It never connects to your devices, so it doesn't use up the connections your phone or Display need. It works with any Bluetooth adapter or proxy that Home Assistant supports, including passive ones.
+
+Requires Home Assistant 2026.10.4 or newer.
 
 ## Installation
 
@@ -26,15 +30,54 @@ Platform | Description
 
 ## Configuration
 
-There is currently no configuration required for this integration. Once the integration discovers your Combustion device(s), it will prompt you to add them on the Integrations page.
+There is no configuration. Once Home Assistant hears a Combustion device, it offers to set up the integration on the Integrations page. You can also add it from there yourself. One setup covers every Combustion device in range, and new devices are added automatically as they are heard.
 
 ## Supported devices
 
-This integration supports reading temperature and battery data from Combustion's [Predictive Thermometer](https://combustion.inc/products/predictive-thermometer).
+This integration reads data from Combustion's [Predictive Thermometer](https://combustion.inc/products/predictive-thermometer) and Giant Grill Gauge.
 
-This integration can read data from a probe directly, or via a Meatnet repeater such as the [Range-Extending Booster](https://combustion.inc/products/long-range-predictive-thermometer) or [Range-Extending Display](https://combustion.inc/products/range-extending-display).
+It can hear a probe directly, or through a MeatNet repeater such as the [Range-Extending Booster](https://combustion.inc/products/long-range-predictive-thermometer), [Range-Extending Display](https://combustion.inc/products/range-extending-display), or Giant Grill Gauge. When both are available, it uses the probe's own advertisements.
 
-This integration will not display information about the repeater itself, only the probes connected to it.
+## How data is updated
+
+Probes, gauges, and repeaters broadcast their readings several times a second, and entities update as soon as a reading changes. Nothing is polled.
+
+A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 15 seconds. Probes don't broadcast while they're in their charger, so they show as unavailable there.
+
+## Known limitations
+
+- Prediction and cook data need a Bluetooth connection, so they aren't available yet.
+- Repeaters don't get entities of their own.
+- The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.
+- RSSI is only known for probes heard directly.
+
+## Troubleshooting
+
+- Check that Home Assistant's Bluetooth integration is set up, with an adapter or proxy in range of a probe or a repeater.
+- Take the probe out of its charger.
+- For debug logs, add this to `configuration.yaml`:
+
+  ```yaml
+  logger:
+    logs:
+      custom_components.combustion: debug
+      combustion_ble: debug
+  ```
+
+## Removing the integration
+
+1. Go to **Settings** > **Devices & services**, select **Combustion**, open the three-dot menu, and select **Delete**.
+1. If you installed it by hand, delete the `custom_components/combustion` folder and restart Home Assistant.
+
+To remove a single probe or gauge you no longer use, delete it from its device page. This works for devices that haven't been heard since Home Assistant last started.
+
+## Upgrading
+
+Upgrading from earlier versions keeps your existing probe entities, their entity IDs, and their history. Some details change:
+
+- Entity names use sentence case, for example "Core temperature".
+- The battery sensor moves to the device's **Diagnostic** section.
+- The `raw_advertisement_bytes` attribute on temperature sensors has been removed.
 
 ## Contributions are welcome!
 
