@@ -11,5 +11,7 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
-      # Dependabot should not update Home Assistant as that should match the homeassistant key in hacs.json
+      # Home Assistant should match the homeassistant key in hacs.json, and the
+      # test harness pins an exact Home Assistant version. Update them together.
       - dependency-name: "homeassistant"
+      - dependency-name: "pytest-homeassistant-custom-component"

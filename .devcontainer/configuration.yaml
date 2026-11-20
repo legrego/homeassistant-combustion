@@ -4,3 +4,4 @@ logger:
   default: info
   logs:
     custom_components.combustion: debug
+    combustion_ble: debug

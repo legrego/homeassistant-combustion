@@ -17,4 +17,6 @@ fi
 export PYTHONPATH="${PYTHONPATH}:${PWD}/custom_components"
 
 # Start Home Assistant
-hass --config "${PWD}/config" --debug
+## Use the combustion_ble installed by Poetry instead of the version in
+## manifest.json, so you can develop against an unreleased library.
+hass --config "${PWD}/config" --debug --skip-pip-packages combustion_ble

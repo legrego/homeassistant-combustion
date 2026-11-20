@@ -1,12 +1,36 @@
 {
     "config": {
+        "flow_title": "{name}",
         "step": {
             "confirm": {
-                "description": "Do you want to set up {name}?"
+                "description": "Do you want to set up {name}? Every Combustion Predictive Thermometer and Giant Grill Gauge in Bluetooth range will be added, whether heard directly or through a MeatNet repeater."
             }
         },
-        "error": {
-            "unknown": "Unknown error occurred."
+        "abort": {
+            "already_configured": "Combustion is already set up.",
+            "not_supported": "This Combustion device is not supported."
+        }
+    },
+    "entity": {
+        "sensor": {
+            "core_temperature": {
+                "name": "Core temperature"
+            },
+            "surface_temperature": {
+                "name": "Surface temperature"
+            },
+            "ambient_temperature": {
+                "name": "Ambient temperature"
+            },
+            "thermistor_temperature": {
+                "name": "Temperature {number}"
+            },
+            "instant_read_temperature": {
+                "name": "Instant read temperature"
+            },
+            "rssi": {
+                "name": "RSSI"
+            }
         }
     }
 }

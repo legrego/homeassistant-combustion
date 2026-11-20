@@ -1,333 +1,169 @@
-"""Sensor platform for combustion."""
+"""Sensors for Combustion probes and Giant Grill Gauges."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
+from combustion_ble import Device, Gauge, Probe
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, UnitOfTemperature
+from homeassistant.const import (
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityPlatformState
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from sensor_state_data import Units
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.typing import StateType
 
-from custom_components.combustion.combustion_ble.combustion_probe_data import (
-    CombustionProbeData,
-)
-from custom_components.combustion.entity import CombustionEntity
-from custom_components.combustion.probe_manager import ProbeManager
+from .coordinator import CombustionConfigEntry
+from .entity import CombustionEntity
 
-from .const import DOMAIN, LOGGER
+# Entities only update from pushed advertisements.
+PARALLEL_UPDATES = 0
 
-_LOGGER = LOGGER.getChild('sensor')
 
-VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
-    key=f"{SensorDeviceClass.TEMPERATURE}_{Units.TEMP_CELSIUS}",
-    device_class=SensorDeviceClass.TEMPERATURE,
-    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-    state_class=SensorStateClass.MEASUREMENT,
-    suggested_display_precision=1
-)
+@dataclass(frozen=True, kw_only=True)
+class CombustionSensorEntityDescription(SensorEntityDescription):
+    """Describes a Combustion sensor."""
 
-TEMPERATURE_SENSOR_DESCRIPTION = SensorEntityDescription(
-    key=f"{SensorDeviceClass.TEMPERATURE}_{Units.TEMP_CELSIUS}",
-    device_class=SensorDeviceClass.TEMPERATURE,
-    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-    state_class=SensorStateClass.MEASUREMENT,
-    suggested_display_precision=1,
-    entity_registry_enabled_default=False,
-)
+    value_fn: Callable[[Any], StateType]
+    thermistor_fn: Callable[[Probe], int] | None = None
+    """For virtual sensors: which thermistor (1-8) the reading comes from."""
 
-RSSI_SENSOR_DESCRIPTION = SensorEntityDescription(
-    key=f"{SensorDeviceClass.SIGNAL_STRENGTH}_{Units.SIGNAL_STRENGTH_DECIBELS_MILLIWATT}",
+
+def _temperature(
+    key: str, value_fn: Callable[[Any], StateType], **kwargs: Any
+) -> CombustionSensorEntityDescription:
+    return CombustionSensorEntityDescription(
+        **{
+            "key": key,
+            "device_class": SensorDeviceClass.TEMPERATURE,
+            "native_unit_of_measurement": UnitOfTemperature.CELSIUS,
+            "state_class": SensorStateClass.MEASUREMENT,
+            "suggested_display_precision": 1,
+            "value_fn": value_fn,
+            **kwargs,
+        }
+    )
+
+
+def _thermistor_reading(number: int) -> Callable[[Probe], float | None]:
+    def value(probe: Probe) -> float | None:
+        if probe.temperatures is None:
+            return None
+        return probe.temperatures[number - 1]
+
+    return value
+
+
+def _thermistor_number(sensor: Any) -> int:
+    # Virtual sensor enum members are named after their thermistor, e.g. VirtualSurfaceSensor.T6.
+    return int(sensor.name[1:])
+
+
+_RSSI = CombustionSensorEntityDescription(
+    key="rssi",
+    translation_key="rssi",
     device_class=SensorDeviceClass.SIGNAL_STRENGTH,
     native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
+    value_fn=lambda device: device.rssi,
 )
 
-SENSOR_DESCRIPTIONS = {
-    (
-        SensorDeviceClass.TEMPERATURE,
-        Units.TEMP_CELSIUS,
-    ): SensorEntityDescription(
-        key=f"{SensorDeviceClass.TEMPERATURE}_{Units.TEMP_CELSIUS}",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        state_class=SensorStateClass.MEASUREMENT,
+PROBE_SENSORS: tuple[CombustionSensorEntityDescription, ...] = (
+    _temperature(
+        "sensor--core",
+        lambda probe: probe.core_temperature,
+        translation_key="core_temperature",
+        thermistor_fn=lambda probe: _thermistor_number(probe.core_sensor),
     ),
-    (
-        SensorDeviceClass.ENUM.value,
-        None
-    ): SensorEntityDescription(
-        key=f"{SensorDeviceClass.ENUM}_mode",
-        device_class=SensorDeviceClass.ENUM,
-        options=['normal', 'instant_read', 'error', 'reserved', 'unknown']
+    _temperature(
+        "sensor--surface",
+        lambda probe: probe.surface_temperature,
+        translation_key="surface_temperature",
+        thermistor_fn=lambda probe: _thermistor_number(probe.surface_sensor),
     ),
-    (
-        SensorDeviceClass.SIGNAL_STRENGTH,
-        Units.SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-    ): SensorEntityDescription(
-        key=f"{SensorDeviceClass.SIGNAL_STRENGTH}_{Units.SIGNAL_STRENGTH_DECIBELS_MILLIWATT}",
-        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
+    _temperature(
+        "sensor--ambient",
+        lambda probe: probe.ambient_temperature,
+        translation_key="ambient_temperature",
+        thermistor_fn=lambda probe: _thermistor_number(probe.ambient_sensor),
     ),
-}
+    *(
+        _temperature(
+            f"thermistor--{number}",
+            _thermistor_reading(number),
+            translation_key="thermistor_temperature",
+            translation_placeholders={"number": str(number)},
+            entity_registry_enabled_default=False,
+        )
+        for number in range(1, 9)
+    ),
+    # Smoothed the same way Combustion's apps show it. Unknown unless the probe is in instant read
+    # mode.
+    _temperature(
+        "instant_read",
+        lambda probe: probe.instant_read_celsius,
+        translation_key="instant_read_temperature",
+        suggested_display_precision=0,
+    ),
+    # Signal strength of the probe's own advertisements. Unknown when only heard through MeatNet.
+    _RSSI,
+)
 
-def _create_temperature_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
-    sensors: list[BaseCombustionTemperatureSensor] = [
-        CombustionVirtualCoreSensor(probe_manager, probe_data),
-        CombustionVirtualSurfaceSensor(probe_manager, probe_data),
-        CombustionVirtualAmbientSensor(probe_manager, probe_data)
-    ]
-    for i in range(len(probe_data.temperature_data)):
-        sensors.append(CombustionTemperatureSensor(probe_manager, probe_data, i + 1))
+GAUGE_SENSORS: tuple[CombustionSensorEntityDescription, ...] = (
+    # Named after its device class. Unknown when no sensor is plugged into the gauge.
+    _temperature("temperature", lambda gauge: gauge.temperature),
+    _RSSI,
+)
 
-    for sensor in sensors:
-        sensor.async_init()
 
-    return sensors
-
-def _create_diagnostic_sensors(probe_manager: ProbeManager, probe_data: CombustionProbeData):
-    sensors: list[CombustionEntity] = [
-        CombustionRSSISensor(probe_manager, probe_data)
-    ]
-
-    for sensor in sensors:
-        sensor.async_init()
-
-    return sensors
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
-    """Set up the sensor platform."""
-    _LOGGER.debug("Starting async_setup_entry")
-
-    def _create_sensors_callback(pm: ProbeManager, probe_data: CombustionProbeData):
-        sensors = _create_temperature_sensors(pm, probe_data)
-        sensors.extend(_create_diagnostic_sensors(pm, probe_data))
-        async_add_entities(sensors)
-
-    probe_manager: ProbeManager = hass.data[DOMAIN]
-    probe_manager.init_sensor_platform(_create_sensors_callback)
-
-class CombustionRSSISensor(CombustionEntity, SensorEntity):
-    """RSSI diagnostic sensor."""
-
-    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
-        """Initialize."""
-        super().__init__(probe_data.serial_number)
-        self.device_serial_number = probe_data.serial_number
-        self.probe_manager = probe_manager
-        self._attr_has_entity_name = True
-        self._attr_unique_id = f'{probe_data.serial_number}--rssi'
-        self.entity_description = RSSI_SENSOR_DESCRIPTION
-
-    def async_init(self):
-        """Async initialization."""
-        self.probe_manager.add_update_listener(self.on_update)
-
-    @property
-    def should_poll(self) -> bool:
-        """Do not poll for updates."""
-        return False
-
-    @property
-    def name(self):
-        """Sensor name."""
-        return 'RSSI'
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: CombustionConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Add sensors for each probe and gauge as it is discovered."""
 
     @callback
-    def on_update(self):
-        """Process probe updates."""
-        _LOGGER.debug("Sensor [%s] with state [%s] has been notified of an update", self.unique_id, self._platform_state)
-        if self._platform_state == EntityPlatformState.ADDED:
-            self.async_schedule_update_ha_state()
+    def _async_add_device(device: Device) -> None:
+        if isinstance(device, Probe):
+            descriptions = PROBE_SENSORS
+        elif isinstance(device, Gauge):
+            descriptions = GAUGE_SENSORS
+        else:
+            return
+        async_add_entities(
+            CombustionSensor(device, description) for description in descriptions
+        )
+
+    entry.async_on_unload(
+        entry.runtime_data.async_add_device_listener(_async_add_device)
+    )
+
+
+class CombustionSensor(CombustionEntity, SensorEntity):
+    """A Combustion sensor."""
+
+    entity_description: CombustionSensorEntityDescription
 
     @property
-    def native_value(self) -> str:
-        """Return the native value of the sensor."""
-        try:
-            return self.probe_manager.probe_data(self.device_serial_number).rssi
-        except Exception as ex:
-            _LOGGER.warning("Error getting rssi for native_value: %s", ex)
-            return "Unknown"
-
-class BaseCombustionTemperatureSensor(CombustionEntity, SensorEntity):
-    """Base class for temperature sensors."""
-
-    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
-        """Initialize."""
-        super().__init__(probe_data.serial_number)
-        self.device_serial_number = probe_data.serial_number
-        self.probe_manager = probe_manager
-        self._attr_has_entity_name = True
-
-    def async_init(self):
-        """Async initialization."""
-        self.probe_manager.add_update_listener(self.on_update)
-
-    @callback
-    def on_update(self):
-        """Process probe updates."""
-        _LOGGER.debug("Sensor [%s] has been notified of an update", self.unique_id)
-        if self._platform_state == EntityPlatformState.ADDED:
-            self.async_schedule_update_ha_state()
-
-    @property
-    def should_poll(self) -> bool:
-        """Do not poll for updates."""
-        return False
+    def native_value(self) -> StateType:
+        """Return the sensor's value."""
+        return self.entity_description.value_fn(self._device)
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """State attributes."""
-        try:
-            raw_bytes = self.probe_manager.probe_data(self.device_serial_number).advertising_data.bit_string
-        except Exception as ex:
-            _LOGGER.warning("Error getting raw bitstring for extra_state_attributes: %s", ex)
-            return {}
-
-        return {
-            "raw_advertisement_bytes": raw_bytes
-        }
-
-class CombustionTemperatureSensor(BaseCombustionTemperatureSensor):
-    """Combustion Temperature Sensor class."""
-
-    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData, thermistor_id: int) -> None:
-        """Initialize."""
-        super().__init__(probe_manager, probe_data)
-        self.thermistor_id = thermistor_id
-        self._attr_unique_id = f'{probe_data.serial_number}--thermistor--{thermistor_id}'
-        self.entity_description = TEMPERATURE_SENSOR_DESCRIPTION
-
-    @property
-    def name(self):
-        """Sensor name."""
-        return f'Temperature {self.thermistor_id}'
-
-    @property
-    def native_value(self) -> str:
-        """Return the native value of the sensor."""
-        return self.probe_manager.probe_data(self.device_serial_number).temperature_data[self.thermistor_id - 1]
-
-class CombustionVirtualCoreSensor(BaseCombustionTemperatureSensor):
-    """Combustion virtual core sensor class."""
-
-    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
-        """Initialize."""
-        super().__init__(probe_manager, probe_data)
-        self._attr_unique_id = f'{probe_data.serial_number}--sensor--core'
-        self.entity_description = VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION
-
-    @property
-    def name(self):
-        """Sensor name."""
-        return 'Core Temperature'
-
-    @property
-    def native_value(self) -> str:
-        """Return the native value of the sensor."""
-        try:
-            (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
-        except Exception as ex:
-            _LOGGER.warning("Error getting core_sensor temp for native_value: %s", ex)
-            return "Unknown"
-        return temp
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """State attributes."""
-        try:
-            (thermistor_id, _temp) = self.probe_manager.probe_data(self.device_serial_number).core_sensor
-        except Exception as ex:
-            _LOGGER.warning("Error getting core_sensor id for extra_state_attributes: %s", ex)
-            return {}
-
-        return {
-            "thermistor_id": thermistor_id
-        }
-
-class CombustionVirtualAmbientSensor(BaseCombustionTemperatureSensor):
-    """Combustion virtual ambient sensor class."""
-
-    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
-        """Initialize."""
-        super().__init__(probe_manager, probe_data)
-        self._attr_unique_id = f'{probe_data.serial_number}--sensor--ambient'
-        self.entity_description = VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION
-
-    @property
-    def name(self):
-        """Sensor name."""
-        return 'Ambient Temperature'
-
-    @property
-    def native_value(self) -> str:
-        """Return the native value of the sensor."""
-        try:
-            (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
-        except Exception as ex:
-            _LOGGER.warning("Error getting ambient_sensor temp for extra_state_attributes: %s", ex)
-            return "Unknown"
-
-        return temp
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """State attributes."""
-        try:
-            (thermistor_id, _temp) = self.probe_manager.probe_data(self.device_serial_number).ambient_sensor
-        except Exception as ex:
-            _LOGGER.warning("Error getting ambient_sensor id for extra_state_attributes: %s", ex)
-            return {}
-
-        return {
-            "thermistor_id": thermistor_id
-        }
-
-class CombustionVirtualSurfaceSensor(BaseCombustionTemperatureSensor):
-    """Combustion virtual surface sensor class."""
-
-    def __init__(self, probe_manager: ProbeManager, probe_data: CombustionProbeData) -> None:
-        """Initialize."""
-        super().__init__(probe_manager, probe_data)
-        self._attr_unique_id = f'{probe_data.serial_number}--sensor--surface'
-        self.entity_description = VIRTUAL_TEMPERATURE_SENSOR_DESCRIPTION
-
-    @property
-    def name(self):
-        """Sensor name."""
-        return 'Surface Temperature'
-
-    @property
-    def native_value(self) -> str:
-        """Return the native value of the sensor."""
-        try:
-            (_thermistor_id, temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
-        except Exception as ex:
-            _LOGGER.warning("Error getting surface_sensor temp for native_value: %s", ex)
-            return "Unknown"
-
-        return temp
-
-    @property
-    def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """State attributes."""
-        try:
-            (thermistor_id, _temp) = self.probe_manager.probe_data(self.device_serial_number).surface_sensor
-        except Exception as ex:
-            _LOGGER.warning("Error getting surface_sensor id for extra_state_attributes: %s", ex)
-            return {}
-
-        return {
-            "thermistor_id": thermistor_id
-        }
+        """Return which thermistor a virtual sensor reads from."""
+        if (thermistor_fn := self.entity_description.thermistor_fn) is None:
+            return None
+        return {"thermistor_id": thermistor_fn(self._device)}
