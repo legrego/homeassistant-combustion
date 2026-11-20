@@ -8,8 +8,7 @@ readme = "README.md"
 requires-python = ">=3.14.2,<3.15"
 dependencies = [
     # Keep in step with the requirements in custom_components/combustion/manifest.json.
-    # Pinned to the commit that adds MeatNet until combustion_ble 0.4.0 is on PyPI.
-    "combustion_ble @ git+https://github.com/legrego/combustion_ble.git@8202ab4e0a2d1a5aa074461284aecc4994b9157c",
+    "combustion_ble==0.4.1",
 ]
 
 [dependency-groups]

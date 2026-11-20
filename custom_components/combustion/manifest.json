@@ -22,7 +22,7 @@
     "combustion_ble"
   ],
   "requirements": [
-    "combustion_ble==0.4.0"
+    "combustion_ble==0.4.1"
   ],
   "version": "0.0.0"
 }
