@@ -62,6 +62,8 @@ jobs:
           poetry run uv pip install --dry-run --constraint "$constraints" $(jq -r '.requirements[]' custom_components/combustion/manifest.json)
       - name: Run tests
         run: poetry run pytest
+      - name: Require full config flow coverage
+        run: poetry run coverage report --include="*/combustion/config_flow.py" --fail-under=100
       - name: Pytest coverage comment
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: MishaKav/pytest-coverage-comment@v1

@@ -1,5 +1,6 @@
 """Test the config flow."""
 
+import pytest
 from homeassistant.config_entries import SOURCE_BLUETOOTH, SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -53,15 +54,26 @@ async def test_bluetooth_discovery_already_setup(hass: HomeAssistant) -> None:
     assert result["reason"] == "already_configured"
 
 
-async def test_bluetooth_discovery_unsupported(hass: HomeAssistant) -> None:
-    """Discovery aborts for advertisements the library can't parse."""
+@pytest.mark.parametrize(
+    "payload",
+    [None, b"", b"\x01", bytes([0x07]) + bytes(22)],
+    ids=["missing_manufacturer_data", "empty", "truncated", "unsupported_product"],
+)
+async def test_bluetooth_discovery_unsupported(
+    hass: HomeAssistant, payload: bytes | None
+) -> None:
+    """Reject missing, malformed, and unsupported advertisements without creating an entry."""
+    discovery_info = service_info(payload if payload is not None else b"")
+    if payload is None:
+        discovery_info.manufacturer_data.clear()
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_BLUETOOTH},
-        data=service_info(bytes([0x07]) + bytes(22)),
+        data=discovery_info,
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "not_supported"
+    assert not hass.config_entries.async_entries(DOMAIN)
 
 
 async def test_user_setup(hass: HomeAssistant) -> None:
@@ -77,6 +89,8 @@ async def test_user_setup(hass: HomeAssistant) -> None:
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Combustion MeatNet"
+    assert result["data"] == {}
     assert result["result"].unique_id == MEATNET_UNIQUE_ID
 
 
