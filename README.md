@@ -10,10 +10,10 @@ Integrate [Combustion](https://combustion.inc) Predictive Thermometers and Giant
 
 Device | Entities
 -- | --
-Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default).
+Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target, time remaining, and prediction status.
 Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
 
-The integration only listens to Bluetooth advertisements. It never connects to your devices, so it doesn't use up the connections your phone or Display need. It works with any Bluetooth adapter or proxy that Home Assistant supports, including passive ones.
+By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions use a direct Bluetooth connection to each probe.
 
 Requires Home Assistant 2026.10.4 or newer.
 
@@ -40,7 +40,7 @@ One setup covers every Combustion device in range. New devices are added automat
 
 ## Configuration
 
-No address, account, credentials, or other settings are required. The integration listens for advertisements through Home Assistant's Bluetooth integration.
+No address, account, or credentials are required. The integration listens for advertisements through Home Assistant's Bluetooth integration. Cooking predictions can be enabled in the integration options.
 
 The integration provides sensor entities. It does not define its own actions, triggers, or conditions; you can use the entities with Home Assistant's standard state and numeric state automation triggers and conditions.
 
@@ -56,9 +56,30 @@ Probes, gauges, and repeaters broadcast their readings several times a second, a
 
 A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 15 seconds. Probes don't broadcast while they're in their charger, so they show as unavailable there.
 
+## Cooking predictions
+
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors for each probe.
+
+This requires a Bluetooth adapter or proxy that supports active connections, with the probe itself in range. Each probe supports three simultaneous connections; Home Assistant uses one. Existing passive temperature sensors continue to work without connections.
+
+Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. Failed connections retry after at least 60 seconds, when another direct advertisement is received.
+
+### Capture a local prediction report
+
+With this repository's dependencies installed, run from the repository root:
+
+```sh
+poetry run python scripts/capture_predictions.py --seconds 120
+```
+
+Take the probe out of its charger, keep it near the computer, and set a cooking target in the Combustion app or Display first. On macOS, allow Bluetooth access for your terminal if prompted. If multiple probes are found, rerun with `--serial 10001CCC`, using your probe's serial. Use `--list` to discover probes without connecting.
+
+The script prints raw and decoded status notifications and saves them to a timestamped `.jsonl` report in the temporary directory; the full path is printed at the end. Share that report to check the packet format, prediction state, target, time remaining, update gaps, and connection behavior. It reads notifications without changing the cooking target. An idle or warming probe may have no usable time prediction; capturing during an active prediction is most useful. This checks local probe communication and decoding; Home Assistant dashboard and automation behavior still need testing in Home Assistant.
+
 ## Known limitations
 
-- Prediction and cook data need a Bluetooth connection, so they aren't available yet.
+- Predictions currently require a direct connection to the probe; prediction data through MeatNet repeaters is not supported.
+- Cooking targets must be set using the Combustion app or Display. This integration only reads predictions.
 - Repeaters don't get entities of their own.
 - The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.
 - RSSI is only known for probes heard directly.

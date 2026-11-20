@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from combustion_ble import COMBUSTION_MANUFACTURER_ID, Device, MeatNet
+from combustion_ble import (
+    COMBUSTION_MANUFACTURER_ID,
+    Device,
+    MeatNet,
+    Probe,
+    ProbeAdvertisement,
+    parse_advertisement,
+)
 from combustion_ble.meatnet import DEFAULT_STALE_TIMEOUT
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -13,6 +20,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import LOGGER
+from .prediction import PredictionMonitor
 
 EXPIRE_INTERVAL = timedelta(seconds=1)
 
@@ -22,13 +30,17 @@ type CombustionConfigEntry = ConfigEntry[CombustionCoordinator]
 class CombustionCoordinator:
     """Keeps a MeatNet up to date with advertisements from Home Assistant's Bluetooth integration.
 
-    Home Assistant owns all scanning. This only listens, so it works with any adapter or proxy,
-    including passive ones.
+    Home Assistant owns all scanning. Temperature readings work with passive adapters and proxies.
+    Optional prediction monitors connect directly to probes through connectable adapters.
     """
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(
+        self, hass: HomeAssistant, *, enable_predictions: bool = False
+    ) -> None:
         """Initialize."""
         self.hass = hass
+        self.enable_predictions = enable_predictions
+        self.predictions: dict[int, PredictionMonitor] = {}
         self.meatnet = MeatNet()
         self._handled_times: dict[str, float] = {}
         self.meatnet.add_device_listener(self._async_log_availability)
@@ -101,6 +113,19 @@ class CombustionCoordinator:
     ) -> None:
         self._handled_times[service_info.address] = service_info.time
         self.meatnet.handle_service_info(service_info)
+        if self.enable_predictions:
+            payload = service_info.manufacturer_data.get(COMBUSTION_MANUFACTURER_ID)
+            advertisement = (
+                parse_advertisement(payload) if payload is not None else None
+            )
+            if (
+                isinstance(advertisement, ProbeAdvertisement)
+                and advertisement.has_probe
+                and not advertisement.is_repeated
+            ):
+                self.prediction_for(
+                    self.meatnet.probes[advertisement.serial_number]
+                ).async_connect(service_info.address)
 
     @callback
     def _async_tick(self, _now: datetime) -> None:
@@ -116,3 +141,17 @@ class CombustionCoordinator:
                 self._async_handle_service_info(service_info)
 
         self.meatnet.expire()
+        for monitor in self.predictions.values():
+            monitor.async_tick()
+
+    @callback
+    def prediction_for(self, probe: Probe) -> PredictionMonitor:
+        """Get a probe's prediction monitor."""
+        if probe.serial_number not in self.predictions:
+            self.predictions[probe.serial_number] = PredictionMonitor(self.hass)
+        return self.predictions[probe.serial_number]
+
+    async def async_stop_predictions(self) -> None:
+        """Release all direct probe connections during unload."""
+        for monitor in self.predictions.values():
+            await monitor.async_stop()

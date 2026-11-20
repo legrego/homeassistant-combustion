@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+import voluptuous as vol
 from combustion_ble import COMBUSTION_MANUFACTURER_ID, parse_advertisement
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.core import callback
 
-from .const import DOMAIN, MEATNET_UNIQUE_ID, NAME
+from .const import CONF_ENABLE_PREDICTIONS, DOMAIN, MEATNET_UNIQUE_ID, NAME
 
 
 class CombustionFlowHandler(ConfigFlow, domain=DOMAIN):
@@ -19,6 +26,12 @@ class CombustionFlowHandler(ConfigFlow, domain=DOMAIN):
     """
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> CombustionOptionsFlow:
+        """Offer optional direct prediction connections."""
+        return CombustionOptionsFlow()
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -52,4 +65,28 @@ class CombustionFlowHandler(ConfigFlow, domain=DOMAIN):
         self._set_confirm_only()
         return self.async_show_form(
             step_id="confirm", description_placeholders={"name": NAME}
+        )
+
+
+class CombustionOptionsFlow(OptionsFlow):
+    """Configure read-only cooking predictions."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Enable or disable direct probe connections."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_ENABLE_PREDICTIONS,
+                        default=self.config_entry.options.get(
+                            CONF_ENABLE_PREDICTIONS, False
+                        ),
+                    ): bool,
+                }
+            ),
         )

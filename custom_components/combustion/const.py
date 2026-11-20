@@ -10,3 +10,5 @@ MANUFACTURER = "Combustion, Inc."
 
 # A single config entry covers every Combustion device in range, so it has a fixed unique ID.
 MEATNET_UNIQUE_ID = "combustion_meatnet"
+
+CONF_ENABLE_PREDICTIONS = "enable_predictions"

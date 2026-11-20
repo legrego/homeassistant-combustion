@@ -30,6 +30,33 @@
             },
             "rssi": {
                 "name": "RSSI"
+            },
+            "prediction_target": {
+                "name": "Cooking target temperature"
+            },
+            "prediction_remaining": {
+                "name": "Cooking time remaining"
+            },
+            "prediction_status": {
+                "name": "Cooking prediction status",
+                "state": {
+                    "idle": "Idle",
+                    "probe_not_inserted": "Probe not inserted",
+                    "probe_inserted": "Probe inserted",
+                    "warming": "Warming",
+                    "predicting": "Predicting",
+                    "ready": "Ready"
+                }
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "description": "Read cooking predictions through a direct Bluetooth connection to each probe. Requires an adapter or proxy that supports connections and uses one of each probe\u2019s three connection slots. Set your cooking target in the Combustion app or Display.",
+                "data": {
+                    "enable_predictions": "Enable cooking predictions"
+                }
             }
         }
     }
