@@ -374,3 +374,40 @@ async def test_unload(hass: HomeAssistant) -> None:
         er.async_entries_for_config_entry(entity_registry, entry.entry_id)
         == entities_before
     )
+
+
+async def test_reload(hass: HomeAssistant, clock: FakeClock) -> None:
+    """Reloading preserves entities, resumes updates, and discovers new devices."""
+    entry = await setup_entry(hass)
+    inject_bt_advertisement(hass, service_info(probe_payload()))
+    await hass.async_block_till_done()
+    entity_registry = er.async_get(hass)
+    core_id = get_state(hass, "sensor", f"{PROBE}--sensor--core").entity_id
+    entities_before = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+
+    inject_bt_advertisement(hass, service_info(probe_payload(core=2, low_battery=True)))
+    await hass.async_block_till_done()
+    core = get_state(hass, "sensor", f"{PROBE}--sensor--core")
+    assert core.entity_id == core_id
+    assert core.state == "21.1"
+    assert get_state(hass, "binary_sensor", f"{PROBE}--battery").state == STATE_ON
+    assert (
+        er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+        == entities_before
+    )
+
+    inject_bt_advertisement(hass, service_info(gauge_payload(), address=GAUGE_ADDRESS))
+    await hass.async_block_till_done()
+    assert get_state(hass, "sensor", f"{GAUGE}--temperature").state == "150.0"
+    assert get_state(hass, "binary_sensor", f"{GAUGE}--battery").state == STATE_OFF
+
+    # The expiry timer must also be running again after the reload.
+    await advance(hass, clock, 16)
+    assert (
+        get_state(hass, "sensor", f"{PROBE}--sensor--core").state == STATE_UNAVAILABLE
+    )
+    assert get_state(hass, "sensor", f"{GAUGE}--temperature").state == STATE_UNAVAILABLE
