@@ -24,11 +24,10 @@ rules:
     status: done
     comment: >-
       combustion_ble is Apache-2.0 licensed and published on PyPI.
-      The pinned v0.4.1 tag matches commit d97c3a9eb10ddfc94acd528c3144417b63ef5b85
-      from the successful public build and PyPI publishing run
-      https://github.com/legrego/combustion_ble/actions/runs/44814081804.
-      Source and license: https://github.com/legrego/combustion_ble/tree/v0.4.1.
-      Package: https://pypi.org/project/combustion-ble/0.4.1/.
+      This draft pins the source archive at commit 4d4f5ebabcef5d165d1c1ead904c397981c58458
+      from https://github.com/legrego/combustion_ble/pull/48 to exercise its host-managed session API.
+      Source and license: https://github.com/legrego/combustion_ble/tree/4d4f5ebabcef5d165d1c1ead904c397981c58458.
+      Replace this review dependency with a published release before merging.
   docs-actions:
     status: exempt
     comment: The integration does not provide actions; README.md explains using its entities in standard automations.

@@ -27,10 +27,11 @@ from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from combustion_ble import (
     COMBUSTION_MANUFACTURER_ID,
+    MeatNet,
     ProbeAdvertisement,
+    ProbeSession,
     parse_advertisement,
 )
-from combustion_ble.ble_data.probe_status import ProbeStatus
 from combustion_ble.const import DEVICE_STATUS_CHARACTERISTIC
 
 
@@ -44,6 +45,7 @@ def positive_seconds(value: str) -> float:
 
 async def capture(args: argparse.Namespace, emit) -> int:
     """Discover a direct probe and record raw and decoded connected statuses."""
+    meatnet = MeatNet()
     probes: dict[str, BLEDevice] = {}
     seen: set[str] = set()
 
@@ -51,6 +53,7 @@ async def capture(args: argparse.Namespace, emit) -> int:
         payload = advertisement.manufacturer_data.get(COMBUSTION_MANUFACTURER_ID)
         if payload is None:
             return
+        meatnet.handle_advertisement(device.address, payload, advertisement.rssi)
         parsed = parse_advertisement(payload)
         if not isinstance(parsed, ProbeAdvertisement) or not parsed.has_probe:
             return
@@ -80,6 +83,8 @@ async def capture(args: argparse.Namespace, emit) -> int:
         )
         return 1
 
+    probe = meatnet.probes[int(serial, 16)]
+    session = None
     disconnected = asyncio.Event()
     intentional_disconnect = False
     unexpected_disconnect = False
@@ -92,6 +97,8 @@ async def capture(args: argparse.Namespace, emit) -> int:
 
     def on_disconnect(_client):
         nonlocal unexpected_disconnect
+        if session is not None:
+            session.disconnected()
         unexpected_disconnect |= not intentional_disconnect
         emit("disconnected", intentional=intentional_disconnect)
         disconnected.set()
@@ -102,30 +109,59 @@ async def capture(args: argparse.Namespace, emit) -> int:
         if previous is not None:
             max_gap = max(max_gap, now - previous)
         previous = now
-        try:
-            status = ProbeStatus.from_data(bytes(data))
-            if status is None:
-                raise ValueError("status packet shorter than 30 bytes")
-        except (ValueError, IndexError) as error:
+        prediction = probe.prediction
+        if prediction is None:
             malformed += 1
-            emit("malformed_status", raw_hex=bytes(data).hex(), error=str(error))
+            emit(
+                "malformed_status",
+                raw_hex=bytes(data).hex(),
+                error="Library did not publish a prediction status",
+            )
             return
         received += 1
-        prediction = status.prediction_status
-        states.add(prediction.prediction_state.name)
+        states.add(prediction.state.name)
         emit(
             "status",
             elapsed_seconds=round(now - started, 3),
             raw_hex=bytes(data).hex(),
             packet_bytes=len(data),
-            state=prediction.prediction_state.name,
-            mode=prediction.prediction_mode.name,
-            prediction_type=prediction.prediction_type.name,
-            target_celsius=prediction.prediction_set_point_temperature,
-            heat_start_celsius=prediction.heat_start_temperature,
+            state=prediction.state.name,
+            mode=prediction.mode.name,
+            prediction_type=prediction.type.name,
+            target_celsius=prediction.set_point_temperature,
             estimated_core_celsius=prediction.estimated_core_temperature,
-            prediction_seconds=prediction.prediction_value_seconds,
+            prediction_seconds=prediction.seconds_remaining,
         )
+
+    class RecordingClient:
+        """Observe raw notifications while ProbeSession owns their interpretation."""
+
+        def __init__(self, client):
+            self.client = client
+
+        def __getattr__(self, name):
+            return getattr(self.client, name)
+
+        async def start_notify(self, characteristic, callback):
+            if characteristic != DEVICE_STATUS_CHARACTERISTIC:
+                return await self.client.start_notify(characteristic, callback)
+
+            def record(sender, data):
+                nonlocal malformed
+                previous_update = probe.prediction_updated_at
+                callback(sender, data)
+                # Identical valid packets refresh the public timestamp too.
+                if probe.prediction_updated_at == previous_update:
+                    malformed += 1
+                    emit(
+                        "malformed_status",
+                        raw_hex=bytes(data).hex(),
+                        error="Status was ignored by the library",
+                    )
+                else:
+                    notification(sender, data)
+
+            await self.client.start_notify(characteristic, record)
 
     try:
         emit("connecting", serial=serial)
@@ -133,14 +169,21 @@ async def capture(args: argparse.Namespace, emit) -> int:
             probes[serial], disconnected_callback=on_disconnect, timeout=30
         ) as client:
             emit("connected", serial=serial)
-            async with asyncio.timeout(30):
-                await client.start_notify(DEVICE_STATUS_CHARACTERISTIC, notification)
-            emit("subscribed", capture_seconds=args.seconds)
+            session = ProbeSession(meatnet, int(serial, 16), RecordingClient(client))
             try:
+                async with asyncio.timeout(30):
+                    await session.start()
+                emit("subscribed", capture_seconds=args.seconds)
                 with suppress(TimeoutError):
                     await asyncio.wait_for(disconnected.wait(), timeout=args.seconds)
             finally:
                 intentional_disconnect = True
+                try:
+                    async with asyncio.timeout(10):
+                        await session.stop()
+                finally:
+                    # The outer client context releases the connection even if stop fails.
+                    session.disconnected()
     finally:
         tail_gap = monotonic() - previous if previous is not None else 0
         emit(

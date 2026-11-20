@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from bleak.exc import BleakError
+from combustion_ble import MeatNet
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -40,8 +41,20 @@ def connection():
     """Capture status and disconnect callbacks without real Bluetooth I/O."""
     client = Mock()
     client.start_notify = AsyncMock()
-    client.disconnect = AsyncMock()
-    establish = AsyncMock(return_value=client)
+    client.is_connected = True
+    client.stop_notify = AsyncMock()
+    client.write_gatt_char = AsyncMock()
+
+    async def disconnect():
+        client.is_connected = False
+        establish.call_args.kwargs["disconnected_callback"](client)
+
+    async def establish_client(*args, **kwargs):
+        client.is_connected = True
+        return client
+
+    client.disconnect = AsyncMock(side_effect=disconnect)
+    establish = AsyncMock(side_effect=establish_client)
     with (
         patch(
             "custom_components.combustion.prediction.establish_connection", establish
@@ -52,11 +65,20 @@ def connection():
         ),
     ):
         yield client, establish
+        client.write_gatt_char.assert_not_called()
 
 
 def notify(client, **kwargs):
     """Send a raw status notification on the subscribed characteristic."""
     client.start_notify.call_args.args[1](None, status_packet(**kwargs))
+
+
+def make_monitor(hass, clock):
+    """Discover a real library probe and attach an HA connection monitor."""
+    meatnet = MeatNet(clock=clock)
+    meatnet.handle_advertisement(PROBE_ADDRESS, probe_payload())
+    probe = meatnet.probes[int(PROBE, 16)]
+    return PredictionMonitor(hass, meatnet, probe), meatnet, probe
 
 
 async def connect(hass, monitor):
@@ -65,7 +87,7 @@ async def connect(hass, monitor):
     await hass.async_block_till_done()
 
 
-async def test_prediction_entities(hass: HomeAssistant, connection):
+async def test_prediction_entities(hass: HomeAssistant, connection, clock):
     """Connected predictions update sensors, count down, and clear on disconnect."""
     client, establish = connection
     entry = await setup_entry(hass)
@@ -80,21 +102,19 @@ async def test_prediction_entities(hass: HomeAssistant, connection):
         get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state
         == STATE_UNKNOWN
     )
-    with patch("custom_components.combustion.prediction.monotonic", return_value=100):
-        notify(client)
+    notify(client)
     await hass.async_block_till_done()
     assert get_state(hass, "sensor", f"{PROBE}--prediction_target").state == "65.0"
     assert (
         get_state(hass, "sensor", f"{PROBE}--prediction_status").state == "predicting"
     )
-    with patch("custom_components.combustion.prediction.monotonic", return_value=104):
-        entry.runtime_data.predictions[int(PROBE, 16)].async_tick()
-        await hass.async_block_till_done()
-        assert (
-            get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state == "116"
-        )
+    clock.advance(4)
+    entry.runtime_data.meatnet.expire()
+    await hass.async_block_till_done()
+    assert get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state == "116"
     # Connected status must not replace advertised temperature readings.
     assert get_state(hass, "sensor", f"{PROBE}--sensor--core").state == "20.0"
+    client.is_connected = False
     establish.call_args.kwargs["disconnected_callback"](client)
     notify(client)  # A queued notification after disconnect must not resurrect data.
     await hass.async_block_till_done()
@@ -118,48 +138,46 @@ async def test_prediction_entities(hass: HomeAssistant, connection):
     ],
 )
 async def test_countdown_states(
-    hass, connection, mode, state, prediction_type, expected
+    hass, connection, clock, mode, state, prediction_type, expected
 ):
     """Only valid active predictions yield a remaining duration."""
     client, _ = connection
-    monitor = PredictionMonitor(hass)
+    monitor, meatnet, probe = make_monitor(hass, clock)
     await connect(hass, monitor)
     notify(client, mode=mode, state=state, prediction_type=prediction_type)
-    assert monitor.seconds_remaining == expected
+    assert probe.prediction.seconds_remaining == expected
     await monitor.async_stop()
 
 
-async def test_stale_and_malformed_status(hass, connection):
+async def test_stale_and_malformed_status(hass, connection, clock):
     """Bad packets do not refresh freshness; stale data becomes unknown."""
     client, _ = connection
-    monitor = PredictionMonitor(hass)
+    monitor, meatnet, probe = make_monitor(hass, clock)
     await connect(hass, monitor)
     callback = client.start_notify.call_args.args[1]
-    with patch("custom_components.combustion.prediction.monotonic", return_value=100):
-        notify(client)
+    notify(client)
     callback(None, bytearray(b"short"))
     with patch(
-        "custom_components.combustion.prediction.ProbeStatus.from_data",
+        "combustion_ble.probe_session.ProbeStatus.from_data",
         side_effect=ValueError,
     ):
         callback(None, bytearray(30))
-    with patch("custom_components.combustion.prediction.monotonic", return_value=116):
-        monitor.async_tick()
-    assert monitor.status is None
-    assert monitor.seconds_remaining is None
+    clock.advance(16)
+    meatnet.expire()
+    assert probe.prediction is None
     await monitor.async_stop()
     await monitor.async_stop()
 
 
 @pytest.mark.parametrize("failure", ["connect", "subscribe"])
-async def test_connection_backoff(hass, connection, failure):
+async def test_connection_backoff(hass, connection, clock, failure):
     """Failures release partial connections and cannot hammer a probe with retries."""
     client, establish = connection
     if failure == "connect":
         establish.side_effect = BleakError("no slots")
     else:
         client.start_notify.side_effect = BleakError("subscribe failed")
-    monitor = PredictionMonitor(hass)
+    monitor, meatnet, probe = make_monitor(hass, clock)
     with patch("custom_components.combustion.prediction.monotonic", return_value=100):
         await connect(hass, monitor)
         await connect(hass, monitor)
@@ -172,7 +190,7 @@ async def test_connection_backoff(hass, connection, failure):
     await monitor.async_stop()
 
 
-async def test_stop_during_connect(hass, connection):
+async def test_stop_during_connect(hass, connection, clock):
     """Unloading cancels an unfinished connection and prevents new attempts."""
     _, establish = connection
 
@@ -180,17 +198,17 @@ async def test_stop_during_connect(hass, connection):
         await asyncio.Event().wait()
 
     establish.side_effect = pending
-    monitor = PredictionMonitor(hass)
+    monitor, meatnet, probe = make_monitor(hass, clock)
     await connect(hass, monitor)
     await monitor.async_stop()
     await connect(hass, monitor)
     assert establish.call_count == 1
 
 
-async def test_no_connectable_adapter(hass, connection):
+async def test_no_connectable_adapter(hass, connection, clock):
     """Passive-only adapters never initiate connections."""
     _, establish = connection
-    monitor = PredictionMonitor(hass)
+    monitor, meatnet, probe = make_monitor(hass, clock)
     with patch(
         "custom_components.combustion.prediction.bluetooth.async_ble_device_from_address",
         return_value=None,
@@ -276,7 +294,7 @@ async def test_unload_failure_keeps_prediction_connection(hass, connection):
     client.disconnect.assert_awaited_once()
 
 
-async def test_real_probe_prediction_packet(hass, connection):
+async def test_real_probe_prediction_packet(hass, connection, clock):
     """A captured 94-byte firmware status drives HA sensors and expires correctly."""
     client, _ = connection
     entry = await setup_entry(hass)
@@ -290,29 +308,106 @@ async def test_real_probe_prediction_packet(hass, connection):
     packet = bytes.fromhex(
         "00000000ba000000f223819c903042584ccdfda94820e0537925641ae03e1100e8840ec012541404000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     )
-    monitor = entry.runtime_data.predictions[int(PROBE, 16)]
-    with patch("custom_components.combustion.prediction.monotonic", return_value=100):
-        client.start_notify.call_args.args[1](None, bytearray(packet))
-        await hass.async_block_till_done()
-        assert get_state(hass, "sensor", f"{PROBE}--prediction_target").state == "37.7"
-        assert (
-            get_state(hass, "sensor", f"{PROBE}--prediction_status").state
-            == "predicting"
-        )
-        assert (
-            get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state == "422"
-        )
-    with patch("custom_components.combustion.prediction.monotonic", return_value=104):
-        monitor.async_tick()
-        await hass.async_block_till_done()
-        assert (
-            get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state == "418"
-        )
-    with patch("custom_components.combustion.prediction.monotonic", return_value=116):
-        monitor.async_tick()
-        await hass.async_block_till_done()
-        assert (
-            get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state
-            == STATE_UNKNOWN
-        )
+    client.start_notify.call_args.args[1](None, bytearray(packet))
+    await hass.async_block_till_done()
+    assert get_state(hass, "sensor", f"{PROBE}--prediction_target").state == "37.7"
+    assert (
+        get_state(hass, "sensor", f"{PROBE}--prediction_status").state == "predicting"
+    )
+    assert get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state == "422"
+    clock.advance(4)
+    entry.runtime_data.meatnet.expire()
+    await hass.async_block_till_done()
+    assert get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state == "418"
+    clock.advance(12)
+    # Advertisements remain fresh while connected status has stopped.
+    entry.runtime_data.meatnet.handle_advertisement(PROBE_ADDRESS, probe_payload())
+    entry.runtime_data.meatnet.expire()
+    await hass.async_block_till_done()
+    assert (
+        get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state
+        == STATE_UNKNOWN
+    )
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_reconnect_creates_fresh_session(hass, connection, clock):
+    """A dropped connection clears library state and reconnects with fresh subscriptions."""
+    client, establish = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+    with patch("custom_components.combustion.prediction.monotonic", return_value=100):
+        await connect(hass, monitor)
+        notify(client)
+        late_callback = client.start_notify.call_args.args[1]
+        client.is_connected = False
+        establish.call_args.kwargs["disconnected_callback"](client)
+        await hass.async_block_till_done()
+        late_callback(None, status_packet())
+        assert probe.prediction is None
+        await connect(hass, monitor)
+        assert establish.call_count == 1
+    with patch("custom_components.combustion.prediction.monotonic", return_value=161):
+        await connect(hass, monitor)
+    assert establish.call_count == 2
+    assert (
+        client.start_notify.await_count == 4
+    )  # Status and command notifications per session.
+    notify(client, seconds=90)
+    assert probe.prediction.seconds_remaining == 90
+    await monitor.async_stop()
+    assert probe.prediction is None
+    assert not client.is_connected
+
+
+async def test_unsubscribe_failure_releases_session_after_disconnect(
+    hass, connection, clock
+):
+    """Failed subscription cleanup must not prevent a subsequent session on the probe."""
+    client, establish = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+    await connect(hass, monitor)
+    notify(client)
+    client.stop_notify.side_effect = BleakError("unsubscribe failed")
+    await monitor.async_stop()
+    assert probe.prediction is None
+    assert not client.is_connected
+    client.stop_notify.side_effect = None
+    replacement = PredictionMonitor(hass, meatnet, probe)
+    await connect(hass, replacement)
+    assert establish.call_count == 2
+    notify(client, seconds=30)
+    assert probe.prediction.seconds_remaining == 30
+    await replacement.async_stop()
+
+
+async def test_disconnect_before_session_start(hass, connection, clock):
+    """A connection lost before subscriptions must leave no usable prediction or session."""
+    client, establish = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+
+    async def lost_during_connect(*args, **kwargs):
+        client.is_connected = False
+        kwargs["disconnected_callback"](client)
+        return client
+
+    establish.side_effect = lost_during_connect
+    await connect(hass, monitor)
+    client.start_notify.assert_not_called()
+    assert probe.prediction is None
+    await monitor.async_stop()
+
+
+async def test_disconnect_error_after_connection_closed(hass, connection, clock):
+    """A disconnect error must not prevent releasing library session ownership."""
+    client, _ = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+    await connect(hass, monitor)
+
+    async def failed_disconnect():
+        client.is_connected = False
+        raise BleakError("disconnect failed after link closed")
+
+    client.disconnect.side_effect = failed_disconnect
+    await monitor.async_stop()
+    assert probe.prediction is None
+    assert not client.is_connected

@@ -22,7 +22,7 @@
     "combustion_ble"
   ],
   "requirements": [
-    "combustion_ble==0.4.1"
+    "combustion_ble @ https://github.com/legrego/combustion_ble/archive/4d4f5ebabcef5d165d1c1ead904c397981c58458.zip"
   ],
   "version": "0.0.0"
 }

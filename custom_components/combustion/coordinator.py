@@ -141,14 +141,14 @@ class CombustionCoordinator:
                 self._async_handle_service_info(service_info)
 
         self.meatnet.expire()
-        for monitor in self.predictions.values():
-            monitor.async_tick()
 
     @callback
     def prediction_for(self, probe: Probe) -> PredictionMonitor:
         """Get a probe's prediction monitor."""
         if probe.serial_number not in self.predictions:
-            self.predictions[probe.serial_number] = PredictionMonitor(self.hass)
+            self.predictions[probe.serial_number] = PredictionMonitor(
+                self.hass, self.meatnet, probe
+            )
         return self.predictions[probe.serial_number]
 
     async def async_stop_predictions(self) -> None:

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from combustion_ble import Device, Gauge, PredictionState, Probe
+from combustion_ble import Device, Gauge, PredictionMode, PredictionState, Probe
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -25,7 +25,6 @@ from homeassistant.helpers.typing import StateType
 
 from .coordinator import CombustionConfigEntry
 from .entity import CombustionEntity
-from .prediction import PredictionMonitor
 
 # Entities only update from pushed advertisements.
 PARALLEL_UPDATES = 0
@@ -145,11 +144,7 @@ async def async_setup_entry(
         else:
             return
         if isinstance(device, Probe) and entry.runtime_data.enable_predictions:
-            monitor = entry.runtime_data.prediction_for(device)
-            async_add_entities(
-                CombustionPredictionSensor(device, monitor, description)
-                for description in PREDICTION_SENSORS
-            )
+            descriptions += PREDICTION_SENSORS
         async_add_entities(
             CombustionSensor(device, description) for description in descriptions
         )
@@ -177,6 +172,14 @@ class CombustionSensor(CombustionEntity, SensorEntity):
         return {"thermistor_id": thermistor_fn(self._device)}
 
 
+def _prediction_active(probe: Probe) -> bool:
+    """Whether the probe has a supported cooking target."""
+    return probe.prediction is not None and probe.prediction.mode in (
+        PredictionMode.TIME_TO_REMOVAL,
+        PredictionMode.REMOVAL_AND_RESTING,
+    )
+
+
 PREDICTION_STATES = {
     PredictionState.PROBE_NOT_INSERTED: "probe_not_inserted",
     PredictionState.PROBE_INSERTED: "probe_inserted",
@@ -188,8 +191,10 @@ PREDICTION_STATES = {
 PREDICTION_SENSORS = (
     _temperature(
         "prediction_target",
-        lambda monitor: (
-            monitor.status.prediction_set_point_temperature if monitor.active else None
+        lambda probe: (
+            probe.prediction.set_point_temperature
+            if _prediction_active(probe)
+            else None
         ),
         translation_key="prediction_target",
     ),
@@ -199,45 +204,23 @@ PREDICTION_SENSORS = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.SECONDS,
         suggested_display_precision=0,
-        value_fn=lambda monitor: monitor.seconds_remaining,
+        value_fn=lambda probe: (
+            probe.prediction.seconds_remaining if probe.prediction is not None else None
+        ),
     ),
     CombustionSensorEntityDescription(
         key="prediction_status",
         translation_key="prediction_status",
         device_class=SensorDeviceClass.ENUM,
         options=["idle", *PREDICTION_STATES.values()],
-        value_fn=lambda monitor: (
+        value_fn=lambda probe: (
             (
-                PREDICTION_STATES.get(monitor.status.prediction_state)
-                if monitor.active
+                PREDICTION_STATES.get(probe.prediction.state)
+                if _prediction_active(probe)
                 else "idle"
             )
-            if monitor.status is not None
+            if probe.prediction is not None
             else None
         ),
     ),
 )
-
-
-class CombustionPredictionSensor(CombustionSensor):
-    """A prediction entity that also follows connected status notifications."""
-
-    def __init__(
-        self,
-        probe: Probe,
-        monitor: PredictionMonitor,
-        description: CombustionSensorEntityDescription,
-    ) -> None:
-        """Attach prediction data to the existing probe device."""
-        super().__init__(probe, description)
-        self._monitor = monitor
-
-    @property
-    def native_value(self) -> StateType:
-        """Return connected prediction data, or unknown when disconnected."""
-        return self.entity_description.value_fn(self._monitor)
-
-    async def async_added_to_hass(self) -> None:
-        """Listen for predictions as well as passive availability changes."""
-        await super().async_added_to_hass()
-        self.async_on_remove(self._monitor.add_listener(self.async_write_ha_state))
