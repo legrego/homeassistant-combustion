@@ -411,3 +411,36 @@ async def test_every_route_failed_waits_then_starts_over(
     await settle(hass, entry)
     assert connections.attempts == [NODE_ADDRESS, OTHER_NODE_ADDRESS, NODE_ADDRESS]
     assert revisions(hass, PROBE) == (PROBE_FIRMWARE, PROBE_HARDWARE)
+
+
+async def test_brief_read_gives_way_to_repeater(hass: HomeAssistant, connections):  # noqa: F811
+    """A repeater reconnecting to a gauge held by a brief read waits for the read to stop."""
+    connections.stalled_reads.add(GAUGE_ADDRESS)
+    entry = await enable_predictions(hass)
+    relay(hass)
+    inject_bt_advertisement(
+        hass, service_info(gauge_payload(), address=GAUGE_ADDRESS, rssi=-80)
+    )
+    await settle(hass, entry)
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, GAUGE_ADDRESS]
+    scheduler = entry.runtime_data.revisions
+    assert scheduler.held_address == GAUGE_ADDRESS
+
+    # The repeater drops, and the gauge is the only node left to connect to.
+    connections.unreachable.add(NODE_ADDRESS)
+    connections.clients[NODE_ADDRESS].drop()
+    await hass.async_block_till_done()
+    repeater = entry.runtime_data.repeater
+    repeater._retry_at = 0
+    await settle(hass, entry)
+    # The brief connection is abandoned, not failed, and only then is the gauge connected.
+    connections.clients[GAUGE_ADDRESS].disconnect.assert_awaited_once()
+    assert scheduler.held_address is None
+    assert not scheduler._failed_routes
+    assert not scheduler._results
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, GAUGE_ADDRESS, GAUGE_ADDRESS]
+    assert repeater.session is not None
+    assert repeater.address == GAUGE_ADDRESS
+    assert await hass.config_entries.async_unload(entry.entry_id)

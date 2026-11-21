@@ -22,6 +22,7 @@ from tests.test_repeater import (
     enable_predictions,
     node_status_frame,
     relay,
+    stall,
     tick,
 )
 from tests.utils.bt_utils import (
@@ -139,6 +140,23 @@ async def test_direct_failure_reconnects(hass: HomeAssistant, connection):  # no
     await tick(hass, entry)
     assert get_state(hass, "number", TARGET).state == STATE_UNAVAILABLE
     assert get_state(hass, "button", CANCEL).state == STATE_UNAVAILABLE
+
+
+async def test_failure_interrupts_revision_read(hass: HomeAssistant, connection):  # noqa: F811
+    """A failed command ends the session at once, even while a revision read is stalled."""
+    client, _ = connection
+    client.read_gatt_char.side_effect = stall
+    entry = await connect_direct(hass, client)
+    await settle(hass)
+    client.read_gatt_char.assert_awaited()
+    client.write_gatt_char.side_effect = BleakError("write failed")
+    with pytest.raises(HomeAssistantError) as err:
+        await cancel_target(hass)
+    assert err.value.translation_key == "not_connected"
+    await settle(hass)
+    client.disconnect.assert_awaited_once()
+    await tick(hass, entry)
+    assert get_state(hass, "number", TARGET).state == STATE_UNAVAILABLE
 
 
 async def test_unavailable_without_connection(hass: HomeAssistant, connection):  # noqa: F811

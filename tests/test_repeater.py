@@ -83,6 +83,8 @@ class Connections:
         self.unreachable_probes: set[int] = set()
         self.failing_disconnects = 0
         """How many disconnects fail, leaving the client connected."""
+        self.stalled_reads: set[str] = set()
+        """Addresses whose characteristic reads never complete."""
         self.commands_expected = False
         """Whether the test sets targets. Otherwise any target set fails the test."""
         self.command_success = True
@@ -144,7 +146,9 @@ class Connections:
 
         client.write_gatt_char = AsyncMock(side_effect=write_gatt_char)
         client.read_gatt_char = AsyncMock(
-            side_effect=device_information(NODE_FIRMWARE, NODE_HARDWARE)
+            side_effect=stall
+            if device.address in self.stalled_reads
+            else device_information(NODE_FIRMWARE, NODE_HARDWARE)
         )
         client.disconnect = AsyncMock(side_effect=disconnect)
         client.drop = lambda: (
@@ -157,6 +161,12 @@ class Connections:
     def emit(self, address: str, data: bytes) -> None:
         """Send a UART notification from the client connected to ``address``."""
         self.clients[address].callbacks[UART_TX_CHARACTERISTIC](None, bytearray(data))
+
+
+async def stall(*_args) -> bytes:
+    """Stand in for a characteristic read that never completes."""
+    await asyncio.Event().wait()
+    raise AssertionError("unreachable")
 
 
 @pytest.fixture

@@ -247,6 +247,16 @@ class RevisionScheduler:
             routes.append((device.address, None))
         return routes
 
+    @property
+    def held_address(self) -> str | None:
+        """The device a brief connection is holding, which can't take another session."""
+        return self._monitor.held_address
+
+    @callback
+    def async_cancel_brief(self) -> None:
+        """Give way to a prediction connection: abandon the running brief connection."""
+        self._monitor.async_cancel()
+
     async def async_stop(self) -> None:
         """Stop reading, and release any brief connection."""
         self._stopped = True

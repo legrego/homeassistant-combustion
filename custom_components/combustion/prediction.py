@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from contextlib import suppress
 from time import monotonic
-from typing import Any, ClassVar
+from typing import Any
 
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import (
@@ -86,9 +87,8 @@ class _ConnectionMonitor:
         """Revision reads waiting for the session, by the name of the device they read."""
         self.address: str | None = None
         """Address of the device the running session is connected to."""
-
-    _unrun_result: ClassVar[bool | None] = None
-    """What reads that never ran are reported as."""
+        self._unrun_result: bool | None = None
+        """What reads that never ran are reported as."""
 
     @callback
     def async_request_read(self, name: str, read: Read, done: ReadDone) -> bool:
@@ -112,15 +112,35 @@ class _ConnectionMonitor:
     async def _async_run_reads(
         self, session: Session, disconnected: asyncio.Event
     ) -> None:
-        """Run queued reads one at a time, so they never crowd out relayed status."""
+        """Run queued reads one at a time, so they never crowd out relayed status.
+
+        A read stops when the session ends, rather than holding the connection until its own
+        timeout: Bluetooth reads don't notice the session closing, for example after a failed
+        command.
+        """
         while self._reads and not disconnected.is_set():
             name = next(iter(self._reads))
             read, done = self._reads.pop(name)
-            succeeded = None
+            reading = asyncio.ensure_future(
+                _async_read_information(read(session), name)
+            )
+            ended = asyncio.ensure_future(disconnected.wait())
             try:
-                succeeded = await _async_read_information(read(session), name)
+                await asyncio.wait(
+                    (reading, ended), return_when=asyncio.FIRST_COMPLETED
+                )
             finally:
-                done(succeeded)
+                ended.cancel()
+                if not reading.done():
+                    reading.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await reading
+                done(
+                    None
+                    if reading.cancelled() or reading.exception() is not None
+                    else reading.result()
+                )
+            reading.result()  # Raise unexpected read errors, as before.
 
     @callback
     def _async_drop_reads(self, result: bool | None) -> None:
@@ -358,14 +378,29 @@ class RevisionMonitor(_ConnectionMonitor):
     relays, or directly to a probe. One connection at a time.
     """
 
-    _unrun_result = (
-        False  # The connection was the attempt, so reads it never ran have failed.
-    )
-
     def __init__(self, hass: HomeAssistant, meatnet: MeatNet) -> None:
         """Initialize an idle connection monitor."""
         super().__init__(hass, meatnet)
         self._probe: Probe | None = None
+        self._target: str | None = None
+        """Address of the device the current or unreleased connection is for."""
+
+    @property
+    def held_address(self) -> str | None:
+        """The device this monitor is connecting, connected, or not yet released from.
+
+        That device can't take another session until this monitor lets it go.
+        """
+        if self._task is None and self._unreleased is None:
+            return None
+        return self._target
+
+    @callback
+    def async_cancel(self) -> None:
+        """Abandon the running connection, releasing it. Its unrun reads count as not tried."""
+        if self._task is not None:
+            self._unrun_result = None
+            self._task.cancel()
 
     @callback
     def async_read(
@@ -380,6 +415,9 @@ class RevisionMonitor(_ConnectionMonitor):
         if not self.can_connect:
             return False
         self._probe = probe
+        self._target = address
+        # The connection is the attempt, so reads it never runs have failed.
+        self._unrun_result = False
         self._reads = dict(reads)
         if not self.async_connect(address):
             self._async_drop_reads(False)

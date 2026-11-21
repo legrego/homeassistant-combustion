@@ -252,7 +252,14 @@ class CombustionCoordinator:
         """Keep a repeater connected, and release direct connections it makes redundant."""
         plan = self._plan()
         if repeater.can_connect:
+            # A brief revision connection gives way to predictions. Its device can't take a
+            # second session, so it is passed over until the brief connection releases it.
+            held = self.revisions.held_address
+            if held in plan.repeaters:
+                self.revisions.async_cancel_brief()
             for address in plan.repeaters:
+                if address == held:
+                    continue
                 if address in repeater.failed_addresses:
                     # All untried candidates were unreachable. Start a fresh round so failed
                     # repeaters can recover without starving lower-ranked candidates.
