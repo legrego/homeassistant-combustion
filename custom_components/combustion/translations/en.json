@@ -53,7 +53,7 @@
     "options": {
         "step": {
             "init": {
-                "description": "Read cooking predictions through a direct Bluetooth connection to each probe. Requires an adapter or proxy that supports connections and uses one of each probe\u2019s three connection slots. Set your cooking target in the Combustion app or Display.",
+                "description": "Read cooking predictions over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Set your cooking target in the Combustion app or Display.",
                 "data": {
                     "enable_predictions": "Enable cooking predictions"
                 }

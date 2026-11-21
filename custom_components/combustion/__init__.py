@@ -47,8 +47,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: CombustionConfigEntry) 
 async def _async_options_updated(
     hass: HomeAssistant, entry: CombustionConfigEntry
 ) -> None:
-    """Reload when prediction connections are enabled or disabled."""
-    await hass.config_entries.async_reload(entry.entry_id)
+    """Reload when prediction connections are enabled or disabled.
+
+    Other entry updates must not reload: Bluetooth discovery of each new Combustion address
+    updates the entry's discovery keys, and a reload would drop every prediction connection.
+    """
+    enabled = entry.options.get(CONF_ENABLE_PREDICTIONS, False)
+    if enabled != entry.runtime_data.enable_predictions:
+        await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_config_entry_device(

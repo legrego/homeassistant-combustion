@@ -24,11 +24,11 @@ rules:
     status: done
     comment: >-
       combustion_ble is Apache-2.0 licensed and published on PyPI.
-      The pinned 0.5.0 release includes host-managed prediction sessions and preserves host
-      subscription deadlines on cancellation.
-      Source and license: https://github.com/legrego/combustion_ble/tree/v0.5.0.
-      Release: https://github.com/legrego/combustion_ble/releases/tag/v0.5.0.
-      Package: https://pypi.org/project/combustion-ble/0.5.0/.
+      The pinned 0.6.0 release includes host-managed prediction sessions for probes and
+      MeatNet repeaters, and the connection planner the integration follows.
+      Source and license: https://github.com/legrego/combustion_ble/tree/v0.6.0.
+      Release: https://github.com/legrego/combustion_ble/releases/tag/v0.6.0.
+      Package: https://pypi.org/project/combustion-ble/0.6.0/.
   docs-actions:
     status: exempt
     comment: The integration does not provide actions; README.md explains using its entities in standard automations.

@@ -1,4 +1,8 @@
-"""Home Assistant connection lifecycle for library-owned probe sessions."""
+"""Home Assistant connection lifecycle for library-owned prediction sessions.
+
+A repeater monitor connects to one MeatNet repeater, which relays predictions for every probe on
+its network. Probe monitors connect directly to probes the repeater is not reporting.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
 )
-from combustion_ble import MeatNet, Probe, ProbeSession
+from combustion_ble import MeatNet, NodeSession, Probe, ProbeSession
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 
@@ -21,50 +25,74 @@ RETRY_DELAY = 60
 """Seconds to wait after a failed connection or cleanup before trying again."""
 
 RECONNECT_DELAY = 5
-"""Seconds to wait after a working session drops, so a flapping link cannot hammer the probe."""
+"""Seconds to wait after a working session drops, so a flapping link cannot hammer the device."""
 
 CONNECT_TIMEOUT = 20
 SUBSCRIBE_TIMEOUT = 30
 CLEANUP_TIMEOUT = 10
 
 
-class PredictionMonitor:
-    """Connect a direct probe while the library owns subscriptions and prediction state."""
+type Session = ProbeSession | NodeSession
 
-    def __init__(self, hass: HomeAssistant, meatnet: MeatNet, probe: Probe) -> None:
+
+class _ConnectionMonitor:
+    """Connect a device while the library owns subscriptions and prediction state."""
+
+    def __init__(self, hass: HomeAssistant, meatnet: MeatNet) -> None:
         """Initialize an idle connection monitor."""
         self.hass = hass
         self._meatnet = meatnet
-        self._probe = probe
         self._retry_at = 0.0
         self._task: asyncio.Task | None = None
         self._closed = False
+        self._session: Session | None = None
+        """The session whose subscriptions are running, if any."""
+        self._failed_addresses: set[str] = set()
+        """Addresses that failed during the current round of connection attempts."""
         # A client and session whose cleanup has not finished. The session keeps ownership of the
-        # probe until it is released, so it must be cleaned up before a replacement can start.
-        self._unreleased: (
-            tuple[BleakClientWithServiceCache, ProbeSession | None] | None
-        ) = None
+        # device until it is released, so it must be cleaned up before a replacement can start.
+        self._unreleased: tuple[BleakClientWithServiceCache, Session | None] | None = (
+            None
+        )
+
+    def _name(self) -> str:
+        raise NotImplementedError
+
+    def _create_session(
+        self, client: BleakClientWithServiceCache, address: str
+    ) -> Session:
+        raise NotImplementedError
+
+    @property
+    def can_connect(self) -> bool:
+        """Whether a connection attempt may start now: idle, not stopped, and not backing off."""
+        return (
+            not self._closed
+            and not self.hass.is_stopping
+            and self._task is None
+            and monotonic() >= self._retry_at
+        )
 
     @callback
-    def async_connect(self, address: str) -> None:
-        """Attempt a connection through HA's current adapter, backing off on failure."""
-        if (
-            self._closed
-            or self.hass.is_stopping
-            or self._task is not None
-            or monotonic() < self._retry_at
-        ):
-            return
+    def async_connect(self, address: str) -> bool:
+        """Attempt a connection through HA's current adapter, backing off on failure.
+
+        Return whether an attempt started. It does not start while another attempt or session is
+        running, while backing off, or when no connection-capable adapter can reach ``address``.
+        """
+        if not self.can_connect:
+            return False
         device = bluetooth.async_ble_device_from_address(
             self.hass, address, connectable=True
         )
         if device is None:
-            return
+            return False
         self._task = self.hass.async_create_background_task(
             self._async_run(device),
             f"Combustion prediction {address}",
             eager_start=False,
         )
+        return True
 
     async def _async_run(self, device: BLEDevice) -> None:
         subscribed = False
@@ -75,6 +103,10 @@ class PredictionMonitor:
             self._retry_at = monotonic() + (
                 RECONNECT_DELAY if subscribed else RETRY_DELAY
             )
+            if subscribed:
+                self._failed_addresses.clear()
+            else:
+                self._failed_addresses.add(device.address)
             self._task = None
 
     async def _async_session(self, device: BLEDevice) -> bool:
@@ -93,7 +125,7 @@ class PredictionMonitor:
             client = await establish_connection(
                 BleakClientWithServiceCache,
                 device,
-                self._probe.serial_number_string,
+                self._name(),
                 disconnected_callback=on_disconnect,
                 timeout=CONNECT_TIMEOUT,
             )
@@ -101,14 +133,16 @@ class PredictionMonitor:
             # succeeds. Only disconnects of the connected client end the session; one that was
             # lost before this point is still caught, because start() checks is_connected.
             disconnected.clear()
-            session = ProbeSession(self._meatnet, self._probe.serial_number, client)
+            session = self._create_session(client, device.address)
             async with asyncio.timeout(SUBSCRIBE_TIMEOUT):
                 await session.start()
             subscribed = True
+            self._session = session
             await disconnected.wait()
         except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
             LOGGER.debug("Prediction connection to %s failed: %s", device.address, err)
         finally:
+            self._session = None
             if client is not None:
                 # Recorded before cleanup, so cleanup that fails or is cancelled is retried
                 # before the next connection and when the monitor stops.
@@ -117,7 +151,7 @@ class PredictionMonitor:
         return subscribed
 
     async def _async_release_unreleased(self) -> bool:
-        """Finish any outstanding cleanup. Return whether the probe is free for a new session."""
+        """Finish any outstanding cleanup. Return whether the device is free for a new session."""
         if self._unreleased is None:
             return True
         if not await _async_release(*self._unreleased):
@@ -125,8 +159,13 @@ class PredictionMonitor:
         self._unreleased = None
         return True
 
-    async def async_stop(self) -> None:
-        """Cancel outstanding work and release the probe connection."""
+    @property
+    def cleanup_retry_ready(self) -> bool:
+        """Whether failed cleanup may be retried without hammering the device."""
+        return monotonic() >= self._retry_at
+
+    async def async_stop(self) -> bool:
+        """Cancel outstanding work. Return whether the connection was fully released."""
         self._closed = True
         if (task := self._task) is not None:
             task.cancel()
@@ -136,16 +175,63 @@ class PredictionMonitor:
                 # Only the monitor task's cancellation is expected; propagate the caller's own.
                 if (current := asyncio.current_task()) and current.cancelling():
                     raise
-        await self._async_release_unreleased()
+        released = await self._async_release_unreleased()
+        if not released:
+            self._retry_at = monotonic() + RETRY_DELAY
+        return released
+
+
+class PredictionMonitor(_ConnectionMonitor):
+    """Connect directly to one probe."""
+
+    def __init__(self, hass: HomeAssistant, meatnet: MeatNet, probe: Probe) -> None:
+        """Initialize an idle connection monitor."""
+        super().__init__(hass, meatnet)
+        self._probe = probe
+
+    def _name(self) -> str:
+        return self._probe.serial_number_string
+
+    def _create_session(
+        self, client: BleakClientWithServiceCache, address: str
+    ) -> ProbeSession:
+        return ProbeSession(self._meatnet, self._probe.serial_number, client)
+
+
+class RepeaterMonitor(_ConnectionMonitor):
+    """Connect to one MeatNet repeater, which relays predictions for every probe it reaches."""
+
+    def _name(self) -> str:
+        return "Combustion repeater"
+
+    def _create_session(
+        self, client: BleakClientWithServiceCache, address: str
+    ) -> NodeSession:
+        return NodeSession(self._meatnet, address, client)
+
+    @property
+    def session(self) -> NodeSession | None:
+        """The repeater session whose subscriptions are running, if any."""
+        return self._session if isinstance(self._session, NodeSession) else None
+
+    @property
+    def failed_addresses(self) -> frozenset[str]:
+        """Repeaters that failed during this round of connection attempts."""
+        return frozenset(self._failed_addresses)
+
+    @callback
+    def reset_failures(self) -> None:
+        """Begin another round once every reachable candidate has been tried."""
+        self._failed_addresses.clear()
 
 
 async def _async_release(
-    client: BleakClientWithServiceCache, session: ProbeSession | None
+    client: BleakClientWithServiceCache, session: Session | None
 ) -> bool:
     """Unsubscribe and disconnect. Return whether the session and the link are both released.
 
     The disconnect and the release of session ownership run even if unsubscribing is cancelled,
-    so cancellation cannot leave the probe connected.
+    so cancellation cannot leave the device connected.
     """
     released = session is None
     try:
@@ -165,8 +251,8 @@ async def _async_release(
     return released and not client.is_connected
 
 
-async def _async_stop_session(session: ProbeSession) -> bool:
-    """Stop a session within the cleanup deadline. Return whether it released the probe."""
+async def _async_stop_session(session: Session) -> bool:
+    """Stop a session within the cleanup deadline. Return whether it released the device."""
     try:
         async with asyncio.timeout(CLEANUP_TIMEOUT):
             await session.stop()

@@ -13,7 +13,7 @@ Device | Entities
 Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target, time remaining, and prediction status.
 Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
 
-By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions use a direct Bluetooth connection to each probe.
+By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise.
 
 Requires Home Assistant 2026.10.4 or newer.
 
@@ -60,9 +60,13 @@ A device becomes unavailable when it hasn't been heard, directly or through a re
 
 Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors for each probe. Disabling the option releases the connections and removes these sensors.
 
-This requires a Bluetooth adapter or proxy that supports active connections, with the probe itself in range. Each probe supports three simultaneous connections; Home Assistant uses one. Existing passive temperature sensors continue to work without connections.
+This requires a Bluetooth adapter or proxy that supports active connections. Existing passive temperature sensors continue to work without connections.
 
-Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. When a working connection drops, the integration reconnects after about 5 seconds; failed connections retry after at least 60 seconds. Either way, it reconnects when another direct advertisement is received.
+When a MeatNet repeater (a Range-Extending Booster, Range-Extending Display, Giant Grill Gauge, or Engine) is in range of a connection-capable adapter, the integration connects to it. That one connection provides predictions for every probe on the repeater's network, including probes out of Home Assistant's direct range. It prefers a repeater that is relaying probes, then the strongest signal; if a repeater can't be connected, the next attempt tries another one.
+
+Probes the repeater isn't reporting, or every probe when no repeater is available, get a direct connection instead, with the probe itself in range. Each probe supports three simultaneous connections; a direct connection uses one. Once the repeater reports a probe, its direct connection is released, so a probe may briefly have both connections at startup. If the repeater connection is lost, probes in direct range reconnect directly.
+
+Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Repeaters relay each probe's status about every 5 seconds; direct connections update about every second. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. When a working connection drops, the integration reconnects after about 5 seconds; failed connections retry after at least 60 seconds. Direct connections also reconnect when another direct advertisement is received.
 
 ### Capture a local prediction report
 
@@ -78,7 +82,6 @@ The script prints raw and decoded status notifications and saves them to a times
 
 ## Known limitations
 
-- Predictions currently require a direct connection to the probe; prediction data through MeatNet repeaters is not supported.
 - Cooking targets must be set using the Combustion app or Display. This integration only reads predictions.
 - Repeaters don't get entities of their own.
 - The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.

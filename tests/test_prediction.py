@@ -222,26 +222,6 @@ async def test_no_connectable_adapter(hass, connection, clock):
     await monitor.async_stop()
 
 
-async def test_repeaters_are_not_connected(hass, connection):
-    """Relayed probes get unknown predictions without connecting to the repeater."""
-    _, establish = connection
-    entry = await setup_entry(hass)
-    hass.config_entries.async_update_entry(
-        entry, options={CONF_ENABLE_PREDICTIONS: True}
-    )
-    await hass.async_block_till_done()
-    inject_bt_advertisement(
-        hass, service_info(probe_payload(hop=0), address=NODE_ADDRESS)
-    )
-    await hass.async_block_till_done()
-    establish.assert_not_called()
-    assert (
-        get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state
-        == STATE_UNKNOWN
-    )
-    assert await hass.config_entries.async_unload(entry.entry_id)
-
-
 async def test_options(hass):
     """The options flow stores the connection choice and defaults it to off."""
     entry = await setup_entry(hass)
@@ -253,6 +233,29 @@ async def test_options(hass):
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.runtime_data.enable_predictions
+
+
+async def test_other_entry_updates_keep_connections(hass, connection):
+    """Discovery of a new address updates the entry, which must not drop connections."""
+    client, establish = connection
+    entry = await setup_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_ENABLE_PREDICTIONS: True}
+    )
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    inject_bt_advertisement(hass, service_info(probe_payload()))
+    await hass.async_block_till_done()
+    hass.config_entries.async_update_entry(entry, title="Renamed")
+    # Bluetooth discovery of another Combustion address updates the entry's discovery keys.
+    inject_bt_advertisement(
+        hass, service_info(probe_payload(hop=0), address=NODE_ADDRESS)
+    )
+    await hass.async_block_till_done()
+    assert entry.runtime_data is coordinator
+    client.disconnect.assert_not_called()
+    assert establish.call_count == 1
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_disable_predictions_releases_connection(hass, connection):
