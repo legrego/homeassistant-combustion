@@ -97,6 +97,10 @@ class PredictionMonitor:
                 disconnected_callback=on_disconnect,
                 timeout=CONNECT_TIMEOUT,
             )
+            # Failed attempts inside establish_connection can report disconnects before a retry
+            # succeeds. Only disconnects of the connected client end the session; one that was
+            # lost before this point is still caught, because start() checks is_connected.
+            disconnected.clear()
             session = ProbeSession(self._meatnet, self._probe.serial_number, client)
             async with asyncio.timeout(SUBSCRIBE_TIMEOUT):
                 await session.start()

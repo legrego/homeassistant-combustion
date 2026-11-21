@@ -532,3 +532,25 @@ async def test_stop_propagates_its_own_cancellation(hass, connection, clock):
     release.set()
     await hass.async_block_till_done()
     assert not client.is_connected
+
+
+async def test_failed_attempt_disconnect_does_not_end_retried_session(
+    hass, connection, clock
+):
+    """A disconnect reported by a failed attempt must not close a successful retry."""
+    client, establish = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+
+    async def retried_connect(*args, **kwargs):
+        kwargs["disconnected_callback"](client)  # The first attempt drops.
+        client.is_connected = True  # The retry succeeds.
+        return client
+
+    establish.side_effect = retried_connect
+    await connect(hass, monitor)
+    assert monitor._task is not None
+    client.disconnect.assert_not_called()
+    notify(client, seconds=30)
+    assert probe.prediction.seconds_remaining == 30
+    await monitor.async_stop()
+    assert not client.is_connected
