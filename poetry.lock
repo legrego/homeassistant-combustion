@@ -1355,14 +1355,14 @@ development = ["black", "flake8", "mypy", "pytest", "types-colorama"]
 
 [[package]]
 name = "combustion-ble"
-version = "0.5.0"
+version = "0.6.0"
 description = "SDK for communicating with Combustion Bluetooth devices"
 optional = false
 python-versions = ">=3.14.2"
 groups = ["main"]
 files = [
-    {file = "combustion_ble-0.5.0-py3-none-any.whl", hash = "sha256:60b8cd04e887e69ecd2aeb3b6a873a4fee1486110161f841c329048b297a9259"},
-    {file = "combustion_ble-0.5.0.tar.gz", hash = "sha256:d3d8d41b900d98cc3b233fca54633ffcc23a7ad449dbd8ed78a64c1beb913aaa"},
+    {file = "combustion_ble-0.6.0-py3-none-any.whl", hash = "sha256:6830ac373e994e4033cd72a1e13aebd7bf590ad6eb8350877426203076eeddec"},
+    {file = "combustion_ble-0.6.0.tar.gz", hash = "sha256:e72c853d6360a966a15051b9e21be4949969352d3e54d4247d8599f3e9d27262"},
 ]
 
 [package.dependencies]
@@ -5873,4 +5873,4 @@ ifaddr = ">=0.1.7"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14.2,<3.15"
-content-hash = "31aabfcb7b3d614c923151f2fc0f931a2b823bf0d65c2a745ee7801cc4fc7d4c"
+content-hash = "799a113977c70cbc0af6bb3bb69af6cdab1b92968709c83a0ce7f94fb449bf1a"
