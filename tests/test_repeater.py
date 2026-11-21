@@ -28,12 +28,14 @@ OTHER_NODE_ADDRESS = "CC:CC:CC:CC:CC:05"
 THIRD_NODE_ADDRESS = "CC:CC:CC:CC:CC:06"
 
 
-def node_status_frame(*, serial_number=PROBE_SERIAL, hop=0, **status) -> bytes:
+def node_status_frame(
+    *, serial_number=PROBE_SERIAL, hop=0, food_safe: bytes | None = None, **status
+) -> bytes:
     """Build a repeater's Probe Status (0x45) UART message, per the MeatNet node spec."""
     payload = (
         serial_number.to_bytes(4, "little")
         + bytes(status_packet(**status))
-        + bytes(18)  # Food safe data and status
+        + (food_safe or bytes(18))  # Food safe data and status
         + bytes([hop << 6])  # Network information
         + bytes(1 + 1 + 22 + 22 + 4 + 2)  # Overheating, preferences, alarms, session
     )

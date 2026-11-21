@@ -10,10 +10,10 @@ Integrate [Combustion](https://combustion.inc) Predictive Thermometers and Giant
 
 Device | Entities
 -- | --
-Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target, time remaining, and prediction status.
+Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target, time remaining, and prediction status, and SafeCook food safety.
 Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
 
-By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise.
+By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions and SafeCook use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise.
 
 Requires Home Assistant 2026.10.4 or newer.
 
@@ -40,7 +40,7 @@ One setup covers every Combustion device in range. New devices are added automat
 
 ## Configuration
 
-No address, account, or credentials are required. The integration listens for advertisements through Home Assistant's Bluetooth integration. Cooking predictions can be enabled in the integration options.
+No address, account, or credentials are required. The integration listens for advertisements through Home Assistant's Bluetooth integration. Cooking predictions and SafeCook can be enabled in the integration options.
 
 The integration provides sensor entities. It does not define its own actions, triggers, or conditions; you can use the entities with Home Assistant's standard state and numeric state automation triggers and conditions.
 
@@ -58,7 +58,7 @@ A device becomes unavailable when it hasn't been heard, directly or through a re
 
 ## Cooking predictions
 
-Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors for each probe. Disabling the option releases the connections and removes these sensors.
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors, and [SafeCook sensors](#safecook-food-safety), for each probe. Disabling the option releases the connections and removes these sensors.
 
 This requires a Bluetooth adapter or proxy that supports active connections. Existing passive temperature sensors continue to work without connections.
 
@@ -68,6 +68,21 @@ Probes the repeater isn't reporting, or every probe when no repeater is availabl
 
 Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Repeaters relay each probe's status about every 5 seconds; direct connections update about every second. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. When a working connection drops, the integration reconnects after about 5 seconds; failed connections retry after at least 60 seconds. Direct connections also reconnect when another direct advertisement is received.
 
+### SafeCook food safety
+
+The same connection reports each probe's SafeCook program and its progress. Choose the program in the Combustion app or Display; this integration only reads it.
+
+Sensor | Description
+-- | --
+Food safety | Off, not safe, safe, or safety impossible. Use it to trigger automations when food becomes safe.
+Food safety threshold temperature | The program's threshold temperature. In Simplified mode, food is safe once the core reaches it.
+Time above food safety threshold | How long the core has been above the threshold.
+Food safety log reduction | Integrated mode only: the pathogen log reduction so far.
+Food safety target log reduction | Integrated mode only: the log reduction that makes the food safe.
+Food safety product, Food safety serving | The program's product and serving (diagnostic).
+
+All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off in the app, food safety is **Off** and the other SafeCook sensors are unknown.
+
 ### Capture a local prediction report
 
 With this repository's dependencies installed, run from the repository root:
@@ -76,13 +91,15 @@ With this repository's dependencies installed, run from the repository root:
 poetry run python scripts/capture_predictions.py --seconds 120
 ```
 
-Take the probe out of its charger, keep it near the computer, and set a cooking target in the Combustion app or Display first. On macOS, allow Bluetooth access for your terminal if prompted. If multiple probes are found, rerun with `--serial 10001CCC`, using your probe's serial. Use `--list` to discover probes without connecting.
+To capture every probe a MeatNet repeater relays instead, add `--repeater` (or `--repeater ADDRESS` to choose one listed by `--list`). Label a capture with `--note`, for example `--note "SafeCook never set up"`.
 
-The script prints raw and decoded status notifications and saves them to a timestamped `.jsonl` report in the temporary directory; the full path is printed at the end. Share that report to check the packet format, prediction state, target, time remaining, update gaps, and connection behavior. It reads notifications without changing the cooking target. An idle or warming probe may have no usable time prediction; capturing during an active prediction is most useful. This checks local probe communication and decoding; Home Assistant dashboard and automation behavior still need testing in Home Assistant.
+Take the probe out of its charger, keep it near the computer, and set a cooking target in the Combustion app or Display first. On macOS, allow Bluetooth access for your terminal if prompted. If multiple probes are found, rerun with `--serial 10001CCC`, using your probe's serial. Use `--list` to discover probes and repeaters without connecting.
+
+The script prints raw and decoded status notifications and saves them to a timestamped `.jsonl` report in the temporary directory; the full path is printed at the end. Share that report to check the packet format, prediction state, target, time remaining, SafeCook program and progress, update gaps, and connection behavior. Its summary lists every distinct SafeCook program seen for each probe. It reads notifications without changing the cooking target or SafeCook program. An idle or warming probe may have no usable time prediction; capturing during an active prediction is most useful. This checks local probe communication and decoding; Home Assistant dashboard and automation behavior still need testing in Home Assistant.
 
 ## Known limitations
 
-- Cooking targets must be set using the Combustion app or Display. This integration only reads predictions.
+- Cooking targets and SafeCook programs must be set using the Combustion app or Display. This integration only reads them.
 - Repeaters don't get entities of their own.
 - The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.
 - RSSI is only known for probes heard directly.
