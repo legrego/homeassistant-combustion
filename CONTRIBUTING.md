@@ -61,13 +61,12 @@ poetry install
 
 The Home Assistant version in `pyproject.toml` must match the `homeassistant` key in `hacs.json`, and the `combustion_ble` version must match `requirements` in `custom_components/combustion/manifest.json`.
 
-### Reviewing the prediction dependency
+### Prediction API
 
-This draft builds on [combustion_ble PR #48](https://github.com/legrego/combustion_ble/pull/48),
-using an immutable source archive at `4d4f5ebabcef5d165d1c1ead904c397981c58458` in both
-`pyproject.toml` and the integration manifest. The lock file records the archive hash.
-Use Python 3.14 for Poetry itself when installing this source dependency, as well as for the project environment.
-Replace this temporary pin with the published package version after the library PR is merged and released, before merging this integration PR.
+The integration uses `ProbeSession` and immutable predictions from the published
+`combustion_ble` 0.5.0 release. Keep the dependency in the manifest and `pyproject.toml`
+in sync when updating it. The session contract test verifies that cancellation preserves
+Home Assistant's subscription deadline even when notification cleanup stalls.
 
 The library owns status subscriptions, decoding, immutable prediction snapshots, countdowns,
 and prediction expiry. Home Assistant owns adapter selection, connection setup, retries,

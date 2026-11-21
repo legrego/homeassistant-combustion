@@ -9,10 +9,6 @@ from combustion_ble import MeatNet, ProbeSession
 from tests.utils.bt_utils import PROBE_ADDRESS, PROBE_SERIAL, probe_payload
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="combustion_ble PR #48: cancelled start waits indefinitely on stalled unsubscribe cleanup",
-)
 async def test_subscription_timeout_propagates_when_cleanup_stalls():
     """The host's subscription deadline must remain effective when GATT cleanup stalls."""
     meatnet = MeatNet()
@@ -39,7 +35,7 @@ async def test_subscription_timeout_propagates_when_cleanup_stalls():
         with pytest.raises(TimeoutError):
             await task
     finally:
-        # A second cancellation interrupts the library's unbounded failure cleanup.
+        # Always clean up the session after the host deadline, including assertion failures.
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         client.is_connected = False
