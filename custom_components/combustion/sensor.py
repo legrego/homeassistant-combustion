@@ -261,26 +261,6 @@ PREDICTION_SENSORS = (
 # SafeCook comes from the same connected status as predictions, so it shares their option.
 
 
-def _program_set(food_safe: FoodSafe) -> bool:
-    """Whether the probe has a SafeCook program.
-
-    Turning SafeCook off in the Combustion app writes an all-zero program, which decodes as
-    Simplified mode with a 0 °C threshold. No real program has that threshold or a 0 log target.
-    """
-    return any(
-        (
-            food_safe.mode,
-            food_safe.product,
-            food_safe.serving,
-            food_safe.threshold_temperature,
-            food_safe.z_value,
-            food_safe.reference_temperature,
-            food_safe.d_value,
-            food_safe.target_log_reduction,
-        )
-    )
-
-
 def _food_safe_value(
     fn: Callable[[FoodSafe], StateType], *, integrated_only: bool = False
 ) -> Callable[[Probe], StateType]:
@@ -290,7 +270,7 @@ def _food_safe_value(
     """
 
     def value(probe: Probe) -> StateType:
-        if (food_safe := probe.food_safe) is None or not _program_set(food_safe):
+        if (food_safe := probe.food_safe) is None or not food_safe.program_set:
             return None
         if integrated_only and food_safe.mode is not FoodSafeMode.INTEGRATED:
             # Simplified mode always reports 0, which would read as no progress.
@@ -329,7 +309,7 @@ FOOD_SAFETY_SERVINGS = {
 def _food_safety_state(probe: Probe) -> str | None:
     if (food_safe := probe.food_safe) is None:
         return None
-    if not _program_set(food_safe):
+    if not food_safe.program_set:
         return "off"
     if isinstance(food_safe.state, FoodSafeState):
         return FOOD_SAFETY_STATES[food_safe.state]
