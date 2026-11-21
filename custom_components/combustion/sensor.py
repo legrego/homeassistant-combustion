@@ -6,7 +6,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from combustion_ble import Device, Gauge, Probe
+from combustion_ble import Device, Gauge, PredictionMode, PredictionState, Probe
+from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
+)
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -17,8 +20,10 @@ from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
@@ -133,6 +138,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add sensors for each probe and gauge as it is discovered."""
+    if not entry.runtime_data.enable_predictions:
+        _async_remove_prediction_entities(hass, entry)
 
     @callback
     def _async_add_device(device: Device) -> None:
@@ -142,6 +149,8 @@ async def async_setup_entry(
             descriptions = GAUGE_SENSORS
         else:
             return
+        if isinstance(device, Probe) and entry.runtime_data.enable_predictions:
+            descriptions += PREDICTION_SENSORS
         async_add_entities(
             CombustionSensor(device, description) for description in descriptions
         )
@@ -149,6 +158,18 @@ async def async_setup_entry(
     entry.async_on_unload(
         entry.runtime_data.async_add_device_listener(_async_add_device)
     )
+
+
+@callback
+def _async_remove_prediction_entities(
+    hass: HomeAssistant, entry: CombustionConfigEntry
+) -> None:
+    """Remove prediction sensors left in the registry after predictions are disabled."""
+    registry = er.async_get(hass)
+    suffixes = tuple(f"--{description.key}" for description in PREDICTION_SENSORS)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if entity.domain == SENSOR_DOMAIN and entity.unique_id.endswith(suffixes):
+            registry.async_remove(entity.entity_id)
 
 
 class CombustionSensor(CombustionEntity, SensorEntity):
@@ -167,3 +188,59 @@ class CombustionSensor(CombustionEntity, SensorEntity):
         if (thermistor_fn := self.entity_description.thermistor_fn) is None:
             return None
         return {"thermistor_id": thermistor_fn(self._device)}
+
+
+def _prediction_active(probe: Probe) -> bool:
+    """Whether the probe has a supported cooking target."""
+    return probe.prediction is not None and probe.prediction.mode in (
+        PredictionMode.TIME_TO_REMOVAL,
+        PredictionMode.REMOVAL_AND_RESTING,
+    )
+
+
+PREDICTION_STATES = {
+    PredictionState.PROBE_NOT_INSERTED: "probe_not_inserted",
+    PredictionState.PROBE_INSERTED: "probe_inserted",
+    PredictionState.COOKING: "warming",
+    PredictionState.PREDICTING: "predicting",
+    PredictionState.REMOVAL_PREDICTION_DONE: "ready",
+}
+
+PREDICTION_SENSORS = (
+    _temperature(
+        "prediction_target",
+        lambda probe: (
+            probe.prediction.set_point_temperature
+            if _prediction_active(probe)
+            else None
+        ),
+        translation_key="prediction_target",
+        # A target chosen in the app, not a measurement, so it has no long-term statistics.
+        state_class=None,
+    ),
+    CombustionSensorEntityDescription(
+        key="prediction_remaining",
+        translation_key="prediction_remaining",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        suggested_display_precision=0,
+        value_fn=lambda probe: (
+            probe.prediction.seconds_remaining if probe.prediction is not None else None
+        ),
+    ),
+    CombustionSensorEntityDescription(
+        key="prediction_status",
+        translation_key="prediction_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=["idle", *PREDICTION_STATES.values()],
+        value_fn=lambda probe: (
+            (
+                PREDICTION_STATES.get(probe.prediction.state)
+                if _prediction_active(probe)
+                else "idle"
+            )
+            if probe.prediction is not None
+            else None
+        ),
+    ),
+)

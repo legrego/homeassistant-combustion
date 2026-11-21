@@ -58,8 +58,20 @@ jobs:
       - name: Check that Home Assistant can install the manifest requirements
         # Home Assistant installs requirements with uv, under the versions it pins.
         run: |
-          constraints="$(poetry run python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).parent / "package_constraints.txt")')"
-          poetry run uv pip install --dry-run --constraint "$constraints" $(jq -r '.requirements[]' custom_components/combustion/manifest.json)
+          poetry run python - <<'PYTHON'
+          import json
+          from pathlib import Path
+          import subprocess
+
+          import homeassistant
+
+          constraints = Path(homeassistant.__file__).parent / "package_constraints.txt"
+          manifest = json.loads(Path("custom_components/combustion/manifest.json").read_text())
+          subprocess.run(
+              ["uv", "pip", "install", "--dry-run", "--constraint", str(constraints), *manifest["requirements"]],
+              check=True,
+          )
+          PYTHON
       - name: Run tests
         run: poetry run pytest
       - name: Require Bronze and Silver test coverage

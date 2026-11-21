@@ -61,6 +61,18 @@ poetry install
 
 The Home Assistant version in `pyproject.toml` must match the `homeassistant` key in `hacs.json`, and the `combustion_ble` version must match `requirements` in `custom_components/combustion/manifest.json`.
 
+### Prediction API
+
+The integration uses `ProbeSession` and immutable predictions from the published
+`combustion_ble` 0.5.0 release. Keep the dependency in the manifest and `pyproject.toml`
+in sync when updating it. The session contract test verifies that cancellation preserves
+Home Assistant's subscription deadline even when notification cleanup stalls.
+
+The library owns status subscriptions, decoding, immutable prediction snapshots, countdowns,
+and prediction expiry. Home Assistant owns adapter selection, connection setup, retries,
+and disconnects. Prediction entities subscribe through the same probe listeners as temperatures.
+The capture script also uses `ProbeSession`, so its output tests this dependency rather than a separate parser path.
+
 ### Running tests
 Use `./scripts/test` to run the tests. Arguments are passed to pytest:
 
