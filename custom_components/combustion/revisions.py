@@ -7,9 +7,11 @@ as it is heard again.
 
 Reads use a running prediction connection when one covers the device. Otherwise a brief connection
 is made only for the read: to a MeatNet node that relays the probe, which reads every probe it
-relays at once, or else to the probe directly. Brief connections don't compete with prediction
-connections, so with predictions enabled they are only made to gauges, while a repeater session
-covers the probes.
+relays at once, or else to the probe directly. A route that fails, for example a repeater whose
+connection slots are full, is passed over for the next one; once every route has failed, the
+device waits before a fresh round. Brief connections don't compete with prediction connections,
+so with predictions enabled they are only made to gauges, while a repeater session covers the
+probes.
 """
 
 from __future__ import annotations
@@ -36,7 +38,10 @@ REFRESH_INTERVAL = 24 * 60 * 60
 """Seconds between reads of an online device, whose revisions only change with a firmware update."""
 
 RETRY_INTERVAL = 15 * 60
-"""Seconds to wait after a failed read before trying that device again."""
+"""Seconds to wait after every route to a device has failed before trying it again."""
+
+type Route = tuple[str, Node | None]
+"""Address for a brief connection: a node, or the probe itself when there is no node."""
 
 
 def _read_own(session: Session) -> Coroutine[Any, Any, None]:
@@ -68,6 +73,8 @@ class RevisionScheduler:
         """When each device was last read, and whether the read succeeded."""
         self._pending: set[RevisionDevice] = set()
         """Devices with a read queued or running."""
+        self._failed_routes: dict[RevisionDevice, set[str]] = {}
+        """Addresses whose brief read of a device failed during the current round."""
         self._stopped = False
 
     def _due(self, device: RevisionDevice, now: float) -> bool:
@@ -93,6 +100,7 @@ class RevisionScheduler:
         """
         if self._stopped:
             return
+        self._monitor.async_retry_cleanup()
         now = monotonic()
         due: list[RevisionDevice] = [
             device
@@ -154,15 +162,29 @@ class RevisionScheduler:
         self._pending.discard(device)
         return False
 
-    def _done(self, device: RevisionDevice) -> ReadDone:
-        """Mark a read pending, and return the callback that records its result."""
+    def _done(self, device: RevisionDevice, route: str | None = None) -> ReadDone:
+        """Mark a read pending, and return the callback that records its result.
+
+        ``route`` is the address of a brief connection. When it fails and the device has another
+        route, that route is tried next instead of waiting.
+        """
         self._pending.add(device)
 
         @callback
         def done(succeeded: bool | None) -> None:
             self._pending.discard(device)
-            if succeeded is not None:
-                self._results[device] = (monotonic(), succeeded)
+            if succeeded is None:
+                return
+            if succeeded:
+                self._failed_routes.pop(device, None)
+            elif route is not None:
+                failed = self._failed_routes.setdefault(device, set())
+                failed.add(route)
+                if any(address not in failed for address, _ in self._routes(device)):
+                    return
+                # Every route failed: wait, then start a fresh round.
+                del self._failed_routes[device]
+            self._results[device] = (monotonic(), succeeded)
 
         return done
 
@@ -173,43 +195,57 @@ class RevisionScheduler:
         A node's connection also reads the other due devices it can reach.
         """
         first = devices[0]
-        due = set(devices)
-        if isinstance(first, Gauge):
-            node = self._meatnet.nodes.get(first.address)
-        else:
-            node = self._relaying_node(first)
-        if node is not None:
-            reads: dict[str, tuple[Read, ReadDone]] = {}
-            for gauge in self._meatnet.gauges.values():
-                if gauge.address == node.address and gauge in due:
-                    reads[_name(gauge)] = (_read_own, self._done(gauge))
-            for serial_number in node.relayed_probes:
-                probe = self._meatnet.probes.get(serial_number)
-                if probe is not None and probe in due:
-                    reads[_name(probe)] = (
-                        _read_probe(serial_number),
-                        self._done(probe),
-                    )
-            self._monitor.async_read(node.address, None, reads)
-        elif isinstance(first, Probe) and first.address is not None:
-            self._monitor.async_read(
-                first.address, first, {_name(first): (_read_own, self._done(first))}
-            )
-        else:
-            self._results[first] = (now, False)
-
-    def _relaying_node(self, probe: Probe) -> Node | None:
-        """Pick the node with the strongest signal among those relaying the probe."""
-        nodes = [
-            node
-            for node in self._meatnet.nodes.values()
-            if node.available and probe.serial_number in node.relayed_probes
-        ]
-        return max(
-            nodes,
-            key=lambda node: node.rssi if node.rssi is not None else -999,
-            default=None,
+        failed = self._failed_routes.get(first, set())
+        route = next(
+            (route for route in self._routes(first) if route[0] not in failed), None
         )
+        if route is None:
+            self._failed_routes.pop(first, None)
+            self._results[first] = (now, False)
+            return
+        address, node = route
+        if node is None:
+            assert isinstance(first, Probe)
+            self._monitor.async_read(
+                address, first, {_name(first): (_read_own, self._done(first, address))}
+            )
+            return
+        due = set(devices)
+        reads: dict[str, tuple[Read, ReadDone]] = {}
+        for gauge in self._meatnet.gauges.values():
+            if gauge.address == address and gauge in due:
+                reads[_name(gauge)] = (_read_own, self._done(gauge, address))
+        for serial_number in node.relayed_probes:
+            probe = self._meatnet.probes.get(serial_number)
+            if probe is not None and probe in due:
+                reads[_name(probe)] = (
+                    _read_probe(serial_number),
+                    self._done(probe, address),
+                )
+        self._monitor.async_read(address, None, reads)
+
+    def _routes(self, device: RevisionDevice) -> list[Route]:
+        """List the brief connections that can read a device, best first.
+
+        A gauge is read through its own node. A probe is read through the nodes relaying it,
+        strongest signal first, then directly when it has been heard directly.
+        """
+        if isinstance(device, Gauge):
+            node = self._meatnet.nodes.get(device.address)
+            return [] if node is None else [(device.address, node)]
+        nodes = sorted(
+            (
+                node
+                for node in self._meatnet.nodes.values()
+                if node.available and device.serial_number in node.relayed_probes
+            ),
+            key=lambda node: node.rssi if node.rssi is not None else -999,
+            reverse=True,
+        )
+        routes: list[Route] = [(node.address, node) for node in nodes]
+        if device.address is not None:
+            routes.append((device.address, None))
+        return routes
 
     async def async_stop(self) -> None:
         """Stop reading, and release any brief connection."""

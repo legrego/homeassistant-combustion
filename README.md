@@ -58,7 +58,7 @@ A device becomes unavailable when it hasn't been heard, directly or through a re
 
 ## Firmware and hardware versions
 
-Each probe's and Giant Grill Gauge's device page shows its firmware and hardware versions. Advertisements don't include them, so the integration reads them over a connection: soon after a device is first heard while it's online, then once a day while it stays online. Devices that are only on while you cook are read the next time they're in use. If a read fails, that device is tried again after 15 minutes. Home Assistant keeps the last versions read, so they still show while a device is off.
+Each probe's and Giant Grill Gauge's device page shows its firmware and hardware versions. Advertisements don't include them, so the integration reads them over a connection: soon after a device is first heard while it's online, then once a day while it stays online. Devices that are only on while you cook are read the next time they're in use. If a read fails, the next route is tried, such as another repeater or the probe itself; once every route has failed, that device is tried again after 15 minutes. Home Assistant keeps the last versions read, so they still show while a device is off.
 
 When cooking predictions are on, their connections also read versions. Otherwise the integration connects briefly, reads the versions, and disconnects: to a repeater that relays the probe, which reads every probe it relays in one connection, or else to the probe itself, using one of its three connection slots for a few seconds. Only one such connection is made at a time. Reading versions needs a Bluetooth adapter or proxy that supports active connections; with only passive adapters, versions stay unknown and everything else works as usual.
 

@@ -19,6 +19,7 @@ from tests.conftest import FakeClock
 from tests.test_init import GAUGE, PROBE, setup_entry
 from tests.test_prediction import connection  # noqa: F401 - fixture
 from tests.test_repeater import (
+    OTHER_NODE_ADDRESS,
     PROBE_FIRMWARE_REVISION,
     PROBE_HARDWARE_REVISION,
     connections,  # noqa: F401 - fixture
@@ -33,6 +34,7 @@ from tests.utils.bt_utils import (
     NODE_ADDRESS,
     NODE_FIRMWARE,
     NODE_HARDWARE,
+    PROBE_ADDRESS,
     PROBE_FIRMWARE,
     PROBE_HARDWARE,
     PROBE_SERIAL,
@@ -331,3 +333,81 @@ async def test_probe_without_route_is_not_connected(
     await settle(hass, entry)
     assert not connections.attempts
     assert revisions(hass, PROBE) == (None, None)
+
+
+async def test_failed_disconnect_is_retried(hass: HomeAssistant, connections):  # noqa: F811
+    """A brief connection whose disconnect fails is released without waiting for another read."""
+    connections.failing_disconnects = 1
+    entry = await setup_entry(hass)
+    inject_bt_advertisement(hass, service_info(gauge_payload(), address=GAUGE_ADDRESS))
+    await settle(hass, entry)
+    client = connections.clients[GAUGE_ADDRESS]
+    assert revisions(hass, GAUGE) == (NODE_FIRMWARE, NODE_HARDWARE)
+    assert client.is_connected
+    # Nothing else is due, so only the cleanup retry can release it.
+    allow_brief_connection(entry)
+    await settle(hass, entry)
+    assert not client.is_connected
+    assert entry.runtime_data.revisions._monitor._unreleased is None
+    assert connections.attempts == [GAUGE_ADDRESS]
+
+
+async def test_failed_repeater_falls_back_to_another(
+    hass: HomeAssistant,
+    connections,  # noqa: F811
+    schedule,
+):
+    """A repeater that can't be connected is passed over for the next route."""
+    connections.failing.add(NODE_ADDRESS)
+    entry = await setup_entry(hass)
+    relay(hass, NODE_ADDRESS, rssi=-50)
+    relay(hass, OTHER_NODE_ADDRESS, rssi=-80)
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS]
+    assert revisions(hass, PROBE) == (None, None)
+
+    allow_brief_connection(entry)
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, OTHER_NODE_ADDRESS]
+    assert revisions(hass, PROBE) == (PROBE_FIRMWARE, PROBE_HARDWARE)
+
+
+async def test_failed_repeater_falls_back_to_probe(
+    hass: HomeAssistant,
+    connections,  # noqa: F811
+):
+    """With no other repeater, a probe heard directly is connected instead."""
+    connections.failing.add(NODE_ADDRESS)
+    entry = await setup_entry(hass)
+    relay(hass)
+    inject_bt_advertisement(hass, service_info(probe_payload()))
+    await settle(hass, entry)
+    allow_brief_connection(entry)
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, PROBE_ADDRESS]
+    connections.clients[PROBE_ADDRESS].read_gatt_char.assert_awaited()
+    assert revisions(hass, PROBE)[0] is not None
+
+
+async def test_every_route_failed_waits_then_starts_over(
+    hass: HomeAssistant,
+    connections,  # noqa: F811
+    schedule,
+):
+    """Once every route has failed, the device waits, then the best route is tried first again."""
+    connections.failing.update({NODE_ADDRESS, OTHER_NODE_ADDRESS})
+    entry = await setup_entry(hass)
+    relay(hass, NODE_ADDRESS, rssi=-50)
+    relay(hass, OTHER_NODE_ADDRESS, rssi=-80)
+    for _ in range(3):
+        allow_brief_connection(entry)
+        await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, OTHER_NODE_ADDRESS]
+
+    schedule.advance(RETRY_INTERVAL)
+    connections.failing.clear()
+    relay(hass, NODE_ADDRESS, rssi=-50)
+    allow_brief_connection(entry)
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, OTHER_NODE_ADDRESS, NODE_ADDRESS]
+    assert revisions(hass, PROBE) == (PROBE_FIRMWARE, PROBE_HARDWARE)

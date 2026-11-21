@@ -385,6 +385,32 @@ class RevisionMonitor(_ConnectionMonitor):
             self._async_drop_reads(False)
         return True
 
+    @callback
+    def async_retry_cleanup(self) -> None:
+        """Retry releasing a connection whose disconnect failed, pacing attempts.
+
+        Otherwise a failed disconnect would hold the connection until the next brief read, which
+        can be a day away.
+        """
+        if (
+            self._unreleased is None
+            or self._task is not None
+            or self._closed
+            or self.hass.is_stopping
+            or not self.cleanup_retry_ready
+        ):
+            return
+        self._task = self.hass.async_create_background_task(
+            self._async_cleanup(), "Combustion revisions cleanup", eager_start=False
+        )
+
+    async def _async_cleanup(self) -> None:
+        try:
+            if not await self._async_release_unreleased():
+                self._retry_at = monotonic() + RETRY_DELAY
+        finally:
+            self._task = None
+
     async def _async_connected(
         self, session: Session, disconnected: asyncio.Event
     ) -> None:

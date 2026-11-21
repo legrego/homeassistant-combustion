@@ -81,6 +81,8 @@ class Connections:
         self.failing: set[str] = set()
         self.unreachable: set[str] = set()
         self.unreachable_probes: set[int] = set()
+        self.failing_disconnects = 0
+        """How many disconnects fail, leaving the client connected."""
         self.commands_expected = False
         """Whether the test sets targets. Otherwise any target set fails the test."""
         self.command_success = True
@@ -101,6 +103,9 @@ class Connections:
             client.callbacks[characteristic] = callback
 
         async def disconnect():
+            if self.failing_disconnects:
+                self.failing_disconnects -= 1
+                raise BleakError("disconnect failed")
             if client.is_connected:
                 client.is_connected = False
                 disconnected_callback(client)
