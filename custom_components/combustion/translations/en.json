@@ -47,15 +47,75 @@
                     "predicting": "Predicting",
                     "ready": "Ready"
                 }
+            },
+            "food_safety": {
+                "name": "Food safety",
+                "state": {
+                    "not_safe": "Not safe",
+                    "safe": "Safe",
+                    "safety_impossible": "Safety impossible"
+                }
+            },
+            "food_safety_threshold": {
+                "name": "Food safety threshold temperature"
+            },
+            "food_safety_time_above_threshold": {
+                "name": "Time above food safety threshold"
+            },
+            "food_safety_log_reduction": {
+                "name": "Food safety log reduction"
+            },
+            "food_safety_target_log_reduction": {
+                "name": "Food safety target log reduction"
+            },
+            "food_safety_product": {
+                "name": "Food safety product",
+                "state": {
+                    "simplified_default": "Default (Simplified)",
+                    "simplified_any_poultry": "Any poultry (Simplified)",
+                    "simplified_beef_cuts": "Beef cuts (Simplified)",
+                    "simplified_pork_cuts": "Pork cuts (Simplified)",
+                    "simplified_veal_cuts": "Veal cuts (Simplified)",
+                    "simplified_lamb_cuts": "Lamb cuts (Simplified)",
+                    "simplified_ground_meats": "Ground meats (Simplified)",
+                    "simplified_ham_fresh_or_smoked": "Ham, fresh or smoked (Simplified)",
+                    "simplified_ham_cooked_and_reheated": "Ham, cooked and reheated (Simplified)",
+                    "simplified_eggs": "Eggs (Simplified)",
+                    "simplified_fish_and_shellfish": "Fish and shellfish (Simplified)",
+                    "simplified_leftovers": "Leftovers (Simplified)",
+                    "simplified_casseroles": "Casseroles (Simplified)",
+                    "integrated_poultry": "Poultry (Integrated)",
+                    "integrated_meats": "Meats (Integrated)",
+                    "integrated_meats_ground": "Meats, ground, chopped, or stuffed (Integrated)",
+                    "integrated_poultry_ground": "Poultry, ground, chopped, or stuffed (Integrated)",
+                    "integrated_seafood": "Seafood (Integrated)",
+                    "integrated_seafood_ground": "Seafood, ground or chopped (Integrated)",
+                    "integrated_dairy_milk": "Dairy, milk (Integrated)",
+                    "integrated_other": "Other (Integrated)",
+                    "integrated_seafood_stuffed": "Seafood, stuffed (Integrated)",
+                    "integrated_eggs": "Eggs (Integrated)",
+                    "integrated_eggs_yolk": "Egg yolks (Integrated)",
+                    "integrated_eggs_white": "Egg whites (Integrated)",
+                    "integrated_dairy_creams": "Dairy, creams (Integrated)",
+                    "integrated_dairy_ice_cream_mix": "Dairy, ice cream mix (Integrated)",
+                    "integrated_custom": "Custom (Integrated)"
+                }
+            },
+            "food_safety_serving": {
+                "name": "Food safety serving",
+                "state": {
+                    "served_immediately": "Served immediately",
+                    "cooked_and_chilled": "Cooked and chilled"
+                }
             }
         }
     },
     "options": {
         "step": {
             "init": {
-                "description": "Read cooking predictions over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Set your cooking target in the Combustion app or Display.",
+                "description": "Read cooking predictions and SafeCook food safety over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Set your cooking target and SafeCook program in the Combustion app or Display.",
                 "data": {
-                    "enable_predictions": "Enable cooking predictions"
+                    "enable_predictions": "Enable cooking predictions and SafeCook"
                 }
             }
         }

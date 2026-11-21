@@ -13,6 +13,7 @@ from homeassistant.helpers import entity_registry as er
 
 from custom_components.combustion.const import CONF_ENABLE_PREDICTIONS, DOMAIN
 from custom_components.combustion.prediction import PredictionMonitor
+from custom_components.combustion.sensor import CONNECTED_SENSORS
 from tests.test_init import PROBE, get_state, setup_entry
 from tests.utils.bt_utils import (
     NODE_ADDRESS,
@@ -23,8 +24,19 @@ from tests.utils.bt_utils import (
 )
 
 
-def status_packet(*, state=3, mode=1, prediction_type=1, seconds=120, target=65.0):
-    """Encode the documented seven-byte prediction field in a probe status packet."""
+def status_packet(
+    *,
+    state=3,
+    mode=1,
+    prediction_type=1,
+    seconds=120,
+    target=65.0,
+    food_safe: bytes | None = None,
+):
+    """Encode the documented seven-byte prediction field in a probe status packet.
+
+    Pass ``food_safe`` (see :func:`food_safe_bytes`) for firmware that reports SafeCook.
+    """
     raw = (
         state
         | mode << 4
@@ -34,7 +46,43 @@ def status_packet(*, state=3, mode=1, prediction_type=1, seconds=120, target=65.
         | seconds << 28
         | 700 << 45
     )
-    return bytearray(bytes(23) + raw.to_bytes(7, "little"))
+    return bytearray(bytes(23) + raw.to_bytes(7, "little") + (food_safe or b""))
+
+
+def food_safe_bytes(
+    *,
+    mode=1,
+    product=2,
+    serving=0,
+    threshold=54.4,
+    z_value=7.0,
+    reference=70.0,
+    d_value=0.2,
+    target_log_reduction=6.5,
+    state=0,
+    log_reduction=2.3,
+    seconds_above_threshold=300,
+) -> bytes:
+    """Encode the 18-byte food safe data and status that follow prediction status.
+
+    Defaults are an Integrated program for ground meats, part of the way to safe.
+    """
+
+    def temperature(value: float) -> int:
+        return round(value / 0.05) & 0x1FFF
+
+    data = (
+        mode
+        | product << 3
+        | serving << 13
+        | temperature(threshold) << 16
+        | temperature(z_value) << 29
+        | temperature(reference) << 42
+        | temperature(d_value) << 55
+        | round(target_log_reduction * 10) << 68
+    )
+    status = state | round(log_reduction * 10) << 3 | seconds_above_threshold << 11
+    return data.to_bytes(10, "little") + status.to_bytes(8, "little")
 
 
 @pytest.fixture
@@ -271,14 +319,17 @@ async def test_disable_predictions_releases_connection(hass, connection):
     notify(client)
     registry = er.async_get(hass)
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--prediction_target")
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--food_safety")
     hass.config_entries.async_update_entry(
         entry, options={CONF_ENABLE_PREDICTIONS: False}
     )
     await hass.async_block_till_done()
     client.disconnect.assert_awaited_once()
-    # Prediction sensors are removed rather than left behind as orphaned entities.
-    for key in ("prediction_target", "prediction_remaining", "prediction_status"):
-        assert not registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--{key}")
+    # Prediction and SafeCook sensors are removed rather than left behind as orphaned entities.
+    for description in CONNECTED_SENSORS:
+        assert not registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{PROBE}--{description.key}"
+        )
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--sensor--core")
     inject_bt_advertisement(hass, service_info(probe_payload(low_battery=True)))
     await hass.async_block_till_done()
