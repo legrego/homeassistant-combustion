@@ -143,6 +143,81 @@ async def test_capture_direct_food_safe():
     ]
 
 
+async def test_capture_mixed_food_safe_states():
+    """Keep unknown states as integers without breaking a mixed-state summary."""
+
+    def notify(characteristic, callback):
+        if characteristic == DEVICE_STATUS_CHARACTERISTIC:
+            for state in (0, 5, 1, 7):
+                callback(None, status_packet(food_safe=food_safe_bytes(state=state)))
+
+    rows, result = await run_capture(
+        [service_info(probe_payload())], fake_client(notify)
+    )
+    assert result == 0
+    assert [row["food_safe"]["state"] for row in rows if row["event"] == "status"] == [
+        "NOT_SAFE",
+        5,
+        "SAFE",
+        7,
+    ]
+    assert rows[-1]["food_safe_seen"]["10001CCC"]["states"] == [
+        5,
+        7,
+        "NOT_SAFE",
+        "SAFE",
+    ]
+
+
+@pytest.mark.parametrize("split", [False, True])
+async def test_capture_repeater_program_changes(split):
+    """Keep every program when one probe's frames are combined or fragmented."""
+    frames = node_status_frame(
+        food_safe=food_safe_bytes(product=0)
+    ) + node_status_frame(food_safe=food_safe_bytes(product=2, state=1))
+
+    def notify(characteristic, callback):
+        if characteristic == UART_TX_CHARACTERISTIC:
+            chunks = (frames[:20], frames[20:]) if split else (frames,)
+            for chunk in chunks:
+                callback(None, bytearray(chunk))
+
+    rows, result = await run_capture(
+        [service_info(probe_payload(hop=0), address=NODE_ADDRESS)],
+        fake_client(notify),
+        repeater="auto",
+    )
+    assert result == 0
+    statuses = [row["food_safe"] for row in rows if row["event"] == "status"]
+    assert [status["product"] for status in statuses] == ["POULTRY", "MEATS_GROUND"]
+    assert [status["state"] for status in statuses] == ["NOT_SAFE", "SAFE"]
+    summary = rows[-1]
+    assert summary["valid_notifications"] == 2
+    assert [
+        program["product"]
+        for program in summary["food_safe_seen"]["10001CCC"]["programs"]
+    ] == ["POULTRY", "MEATS_GROUND"]
+
+
+async def test_capture_repeater_identical_statuses():
+    """Still record unchanged statuses that refresh freshness without notifying listeners."""
+    frame = node_status_frame(food_safe=food_safe_bytes())
+
+    def notify(characteristic, callback):
+        if characteristic == UART_TX_CHARACTERISTIC:
+            callback(None, bytearray(frame))
+            callback(None, bytearray(frame))
+
+    rows, result = await run_capture(
+        [service_info(probe_payload(hop=0), address=NODE_ADDRESS)],
+        fake_client(notify),
+        repeater="auto",
+    )
+    assert result == 0
+    assert rows[-1]["valid_notifications"] == 2
+    assert len(rows[-1]["food_safe_seen"]["10001CCC"]["programs"]) == 1
+
+
 @pytest.mark.parametrize("repeater", ["auto", NODE_ADDRESS.lower(), "AA:AA"])
 async def test_capture_repeater(repeater):
     """Record every probe a repeater relays, with its raw UART notifications."""

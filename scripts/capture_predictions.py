@@ -24,7 +24,7 @@ import math
 import platform
 import sys
 import tempfile
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from datetime import UTC, datetime
 from enum import Enum
 from importlib.metadata import version
@@ -160,7 +160,7 @@ class Recorder:
             food_safe_seen={
                 serial: {
                     "reported": seen["reported"],
-                    "states": sorted(seen["states"]),
+                    "states": sorted(seen["states"], key=str),
                     "programs": seen["programs"],
                 }
                 for serial, seen in sorted(self.food_safe.items())
@@ -341,33 +341,41 @@ async def _capture_probe(args, emit, meatnet, device: BLEDevice, serial: str) ->
 
 async def _capture_repeater(args, emit, meatnet, device: BLEDevice, serial) -> int:
     recorder = Recorder(meatnet, emit, monotonic())
-    for probe in meatnet.probes.values():
-        recorder.updated(probe)
+
+    def record(probe):
+        if serial is not None and probe.serial_number_string != serial:
+            return
+        if recorder.updated(probe):
+            recorder.status(probe, repeater=device.address)
 
     def observe(callback, sender, data):
         # UART notifications can split or combine messages, so record them as they arrive. The
         # Probe Status (0x45) frames inside hold the raw food safe bytes.
         emit("uart", raw_hex=bytes(data).hex())
         callback(sender, data)
+        # Identical statuses refresh timestamps without notifying probe listeners.
         for probe in list(meatnet.probes.values()):
-            if serial is not None and probe.serial_number_string != serial:
-                continue
-            if recorder.updated(probe):
-                recorder.status(probe, repeater=device.address)
+            record(probe)
 
-    return await _run(
-        args,
-        emit,
-        recorder,
-        device,
-        lambda client: NodeSession(
-            meatnet,
-            device.address,
-            RecordingClient(client, UART_TX_CHARACTERISTIC, observe),
-        ),
-        label={"repeater": device.address, "serial": serial},
-        valid=lambda: True,
-    )
+    with ExitStack() as listeners:
+        for probe in meatnet.probes.values():
+            recorder.updated(probe)
+            # Observe each change as the session applies it, before another frame in
+            # the same UART notification can overwrite the probe's program or progress.
+            listeners.callback(probe.add_listener(lambda probe=probe: record(probe)))
+        return await _run(
+            args,
+            emit,
+            recorder,
+            device,
+            lambda client: NodeSession(
+                meatnet,
+                device.address,
+                RecordingClient(client, UART_TX_CHARACTERISTIC, observe),
+            ),
+            label={"repeater": device.address, "serial": serial},
+            valid=lambda: True,
+        )
 
 
 async def _run(args, emit, recorder, device, make_session, *, label, valid) -> int:
