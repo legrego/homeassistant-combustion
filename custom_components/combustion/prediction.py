@@ -47,8 +47,8 @@ class _ConnectionMonitor:
         self._closed = False
         self._session: Session | None = None
         """The session whose subscriptions are running, if any."""
-        self._failed_address: str | None = None
-        """The address of the most recent attempt, if it never subscribed."""
+        self._failed_addresses: set[str] = set()
+        """Addresses that failed during the current round of connection attempts."""
         # A client and session whose cleanup has not finished. The session keeps ownership of the
         # device until it is released, so it must be cleaned up before a replacement can start.
         self._unreleased: tuple[BleakClientWithServiceCache, Session | None] | None = (
@@ -103,7 +103,10 @@ class _ConnectionMonitor:
             self._retry_at = monotonic() + (
                 RECONNECT_DELAY if subscribed else RETRY_DELAY
             )
-            self._failed_address = None if subscribed else device.address
+            if subscribed:
+                self._failed_addresses.clear()
+            else:
+                self._failed_addresses.add(device.address)
             self._task = None
 
     async def _async_session(self, device: BLEDevice) -> bool:
@@ -156,8 +159,13 @@ class _ConnectionMonitor:
         self._unreleased = None
         return True
 
-    async def async_stop(self) -> None:
-        """Cancel outstanding work and release the connection."""
+    @property
+    def cleanup_retry_ready(self) -> bool:
+        """Whether failed cleanup may be retried without hammering the device."""
+        return monotonic() >= self._retry_at
+
+    async def async_stop(self) -> bool:
+        """Cancel outstanding work. Return whether the connection was fully released."""
         self._closed = True
         if (task := self._task) is not None:
             task.cancel()
@@ -167,7 +175,10 @@ class _ConnectionMonitor:
                 # Only the monitor task's cancellation is expected; propagate the caller's own.
                 if (current := asyncio.current_task()) and current.cancelling():
                     raise
-        await self._async_release_unreleased()
+        released = await self._async_release_unreleased()
+        if not released:
+            self._retry_at = monotonic() + RETRY_DELAY
+        return released
 
 
 class PredictionMonitor(_ConnectionMonitor):
@@ -204,9 +215,14 @@ class RepeaterMonitor(_ConnectionMonitor):
         return self._session if isinstance(self._session, NodeSession) else None
 
     @property
-    def failed_address(self) -> str | None:
-        """The repeater whose most recent connection attempt never subscribed, if any."""
-        return self._failed_address
+    def failed_addresses(self) -> frozenset[str]:
+        """Repeaters that failed during this round of connection attempts."""
+        return frozenset(self._failed_addresses)
+
+    @callback
+    def reset_failures(self) -> None:
+        """Begin another round once every reachable candidate has been tried."""
+        self._failed_addresses.clear()
 
 
 async def _async_release(

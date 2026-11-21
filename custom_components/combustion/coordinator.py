@@ -54,7 +54,8 @@ class CombustionCoordinator:
         )
         # Direct connections being released because the repeater reports their probes. A probe
         # gets no new direct connection until its old session has let go of the probe.
-        self._retiring: dict[int, asyncio.Task] = {}
+        self._retiring: dict[int, PredictionMonitor] = {}
+        self._retiring_tasks: dict[int, asyncio.Task] = {}
         self._handled_times: dict[str, float] = {}
         self.meatnet.add_device_listener(self._async_log_availability)
 
@@ -168,11 +169,7 @@ class CombustionCoordinator:
         return plan_connections(
             self.meatnet,
             repeater=repeater.session if repeater is not None else None,
-            failed=(
-                {repeater.failed_address}
-                if repeater is not None and repeater.failed_address is not None
-                else ()
-            ),
+            failed=repeater.failed_addresses if repeater is not None else (),
         )
 
     @callback
@@ -181,8 +178,18 @@ class CombustionCoordinator:
         plan = self._plan()
         if repeater.can_connect:
             for address in plan.repeaters:
+                if address in repeater.failed_addresses:
+                    # All untried candidates were unreachable. Start a fresh round so failed
+                    # repeaters can recover without starving lower-ranked candidates.
+                    repeater.reset_failures()
                 if repeater.async_connect(address):
                     break
+        for serial_number, monitor in list(self._retiring.items()):
+            if (
+                serial_number not in self._retiring_tasks
+                and monitor.cleanup_retry_ready
+            ):
+                self._async_release_direct(serial_number, monitor)
         for serial_number in plan.release & self.predictions.keys():
             monitor = self.predictions.pop(serial_number)
             probe = self.meatnet.probes[serial_number]
@@ -190,18 +197,28 @@ class CombustionCoordinator:
                 "Releasing direct connection to %s: a MeatNet repeater reports it",
                 probe,
             )
-            # Bounded by the monitor's cleanup deadlines, so it is safe to track.
-            task = self.hass.async_create_task(
-                monitor.async_stop(),
-                f"Combustion release {probe.serial_number_string}",
-                eager_start=False,
-            )
-            self._retiring[serial_number] = task
-            task.add_done_callback(
-                lambda _task, serial_number=serial_number: self._retiring.pop(
-                    serial_number, None
-                )
-            )
+            self._retiring[serial_number] = monitor
+            self._async_release_direct(serial_number, monitor)
+
+    @callback
+    def _async_release_direct(
+        self, serial_number: int, monitor: PredictionMonitor
+    ) -> None:
+        """Release a redundant connection, retaining failed cleanup for retry and unload."""
+
+        async def release() -> None:
+            try:
+                if await monitor.async_stop():
+                    self._retiring.pop(serial_number)
+            finally:
+                self._retiring_tasks.pop(serial_number)
+
+        # Bounded by the monitor's cleanup deadlines, so it is safe to track.
+        self._retiring_tasks[serial_number] = self.hass.async_create_task(
+            release(),
+            f"Combustion release {serial_number:08X}",
+            eager_start=False,
+        )
 
     @callback
     def prediction_for(self, probe: Probe) -> PredictionMonitor:
@@ -226,5 +243,8 @@ class CombustionCoordinator:
             await monitor.async_stop()
         if self.repeater is not None:
             await self.repeater.async_stop()
-        if self._retiring:
-            await asyncio.gather(*self._retiring.values(), return_exceptions=True)
+        if self._retiring_tasks:
+            await asyncio.gather(*self._retiring_tasks.values(), return_exceptions=True)
+        for serial_number, monitor in list(self._retiring.items()):
+            if await monitor.async_stop():
+                self._retiring.pop(serial_number)

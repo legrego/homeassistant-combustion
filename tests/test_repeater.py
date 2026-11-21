@@ -25,6 +25,7 @@ from tests.utils.bt_utils import (
 )
 
 OTHER_NODE_ADDRESS = "CC:CC:CC:CC:CC:05"
+THIRD_NODE_ADDRESS = "CC:CC:CC:CC:CC:06"
 
 
 def node_status_frame(*, serial_number=PROBE_SERIAL, hop=0, **status) -> bytes:
@@ -223,6 +224,93 @@ async def test_failed_repeater_tries_another(hass: HomeAssistant, connections):
     await hass.async_block_till_done()
     assert remaining(hass) == "60"
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("all_fail", [False, True])
+async def test_repeater_failures_do_not_starve_candidates(
+    hass: HomeAssistant, connections, all_fail
+):
+    """Try every reachable repeater, and retry failed candidates in a fresh round."""
+    entry = await enable_predictions(hass)
+    relay(hass, NODE_ADDRESS, rssi=-40)
+    relay(hass, OTHER_NODE_ADDRESS, rssi=-50)
+    relay(hass, THIRD_NODE_ADDRESS, rssi=-60)
+    connections.failing.update({NODE_ADDRESS, OTHER_NODE_ADDRESS})
+    if all_fail:
+        connections.failing.add(THIRD_NODE_ADDRESS)
+    for now in (100, 161, 222):
+        with patch(
+            "custom_components.combustion.prediction.monotonic", return_value=now
+        ):
+            await tick(hass, entry)
+    assert connections.attempts == [
+        NODE_ADDRESS,
+        OTHER_NODE_ADDRESS,
+        THIRD_NODE_ADDRESS,
+    ]
+    working = THIRD_NODE_ADDRESS
+    if all_fail:
+        # The second repeater recovers. A fresh round must get past the failing first one.
+        connections.failing.remove(OTHER_NODE_ADDRESS)
+        for now in (283, 344):
+            with patch(
+                "custom_components.combustion.prediction.monotonic", return_value=now
+            ):
+                await tick(hass, entry)
+        assert connections.attempts[-2:] == [NODE_ADDRESS, OTHER_NODE_ADDRESS]
+        working = OTHER_NODE_ADDRESS
+    connections.emit(working, node_status_frame(seconds=60))
+    await hass.async_block_till_done()
+    assert remaining(hass) == "60"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("retry_on_unload", [False, True])
+async def test_failed_direct_release_is_retained(
+    hass: HomeAssistant, connections, retry_on_unload
+):
+    """Failed retirement is retried with backoff, blocks replacements, and survives to unload."""
+    entry = await enable_predictions(hass)
+    coordinator = entry.runtime_data
+    inject_bt_advertisement(hass, service_info(probe_payload()))
+    relay(hass)
+    await tick(hass, entry)
+    direct = connections.clients[PROBE_ADDRESS]
+    disconnect = direct.disconnect.side_effect
+    direct.stop_notify.side_effect = BleakError("unsubscribe failed")
+    direct.disconnect.side_effect = BleakError("disconnect failed")
+    with patch("custom_components.combustion.prediction.monotonic", return_value=100):
+        connections.emit(NODE_ADDRESS, node_status_frame())
+        await tick(hass, entry)
+        assert direct.is_connected
+        # Repeated ticks must not retry cleanup before the backoff elapses.
+        attempts = direct.disconnect.await_count
+        await tick(hass, entry)
+        assert direct.disconnect.await_count == attempts
+    with patch("custom_components.combustion.prediction.monotonic", return_value=161):
+        await tick(hass, entry)
+        assert direct.disconnect.await_count == attempts + 1
+        # Losing the repeater must not start a replacement over an unreleased session.
+        connections.clients[NODE_ADDRESS].drop()
+        await hass.async_block_till_done()
+        inject_bt_advertisement(hass, service_info(probe_payload(low_battery=True)))
+        await hass.async_block_till_done()
+        assert connections.attempts == [PROBE_ADDRESS, NODE_ADDRESS]
+    direct.stop_notify.side_effect = None
+    direct.disconnect.side_effect = disconnect
+    if not retry_on_unload:
+        with patch(
+            "custom_components.combustion.prediction.monotonic", return_value=222
+        ):
+            await tick(hass, entry)
+        assert not direct.is_connected
+        inject_bt_advertisement(hass, service_info(probe_payload()))
+        await hass.async_block_till_done()
+        assert connections.attempts.count(PROBE_ADDRESS) == 2
+        assert coordinator.meatnet.probes[PROBE_SERIAL]._prediction_session is not None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert not direct.is_connected
+    assert not coordinator._retiring
 
 
 async def test_no_repeater_without_predictions(hass: HomeAssistant, connections):
