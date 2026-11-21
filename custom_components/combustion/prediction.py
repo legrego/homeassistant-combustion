@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from time import monotonic
 
 from bleak.backends.device import BLEDevice
@@ -19,6 +18,14 @@ from homeassistant.core import HomeAssistant, callback
 from .const import LOGGER
 
 RETRY_DELAY = 60
+"""Seconds to wait after a failed connection or cleanup before trying again."""
+
+RECONNECT_DELAY = 5
+"""Seconds to wait after a working session drops, so a flapping link cannot hammer the probe."""
+
+CONNECT_TIMEOUT = 20
+SUBSCRIBE_TIMEOUT = 30
+CLEANUP_TIMEOUT = 10
 
 
 class PredictionMonitor:
@@ -32,6 +39,11 @@ class PredictionMonitor:
         self._retry_at = 0.0
         self._task: asyncio.Task | None = None
         self._closed = False
+        # A client and session whose cleanup has not finished. The session keeps ownership of the
+        # probe until it is released, so it must be cleaned up before a replacement can start.
+        self._unreleased: (
+            tuple[BleakClientWithServiceCache, ProbeSession | None] | None
+        ) = None
 
     @callback
     def async_connect(self, address: str) -> None:
@@ -55,8 +67,21 @@ class PredictionMonitor:
         )
 
     async def _async_run(self, device: BLEDevice) -> None:
+        subscribed = False
+        try:
+            if await self._async_release_unreleased():
+                subscribed = await self._async_session(device)
+        finally:
+            self._retry_at = monotonic() + (
+                RECONNECT_DELAY if subscribed else RETRY_DELAY
+            )
+            self._task = None
+
+    async def _async_session(self, device: BLEDevice) -> bool:
+        """Run one session until it disconnects. Return whether its subscriptions started."""
         client = None
         session = None
+        subscribed = False
         disconnected = asyncio.Event()
 
         def on_disconnect(_client: BleakClientWithServiceCache) -> None:
@@ -70,43 +95,78 @@ class PredictionMonitor:
                 device,
                 self._probe.serial_number_string,
                 disconnected_callback=on_disconnect,
-                timeout=20,
+                timeout=CONNECT_TIMEOUT,
             )
             session = ProbeSession(self._meatnet, self._probe.serial_number, client)
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(SUBSCRIBE_TIMEOUT):
                 await session.start()
+            subscribed = True
             await disconnected.wait()
         except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
             LOGGER.debug("Prediction connection to %s failed: %s", device.address, err)
         finally:
-            try:
-                if session is not None:
-                    session.disconnected()
-                    try:
-                        async with asyncio.timeout(10):
-                            await session.stop()
-                    except Exception as err:
-                        LOGGER.debug("Prediction subscription cleanup failed: %s", err)
-                if client is not None:
-                    try:
-                        async with asyncio.timeout(10):
-                            await client.disconnect()
-                    except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
-                        LOGGER.debug("Prediction disconnect failed: %s", err)
-                    finally:
-                        # A failed unsubscribe retains session ownership. Once disconnected,
-                        # stop again to release that ownership without further Bluetooth I/O.
-                        if session is not None and not client.is_connected:
-                            await session.stop()
-            finally:
-                self._retry_at = monotonic() + RETRY_DELAY
-                self._task = None
+            if client is not None:
+                # Recorded before cleanup, so cleanup that fails or is cancelled is retried
+                # before the next connection and when the monitor stops.
+                self._unreleased = (client, session)
+                await self._async_release_unreleased()
+        return subscribed
+
+    async def _async_release_unreleased(self) -> bool:
+        """Finish any outstanding cleanup. Return whether the probe is free for a new session."""
+        if self._unreleased is None:
+            return True
+        if not await _async_release(*self._unreleased):
+            return False
+        self._unreleased = None
+        return True
 
     async def async_stop(self) -> None:
         """Cancel outstanding work and release the probe connection."""
         self._closed = True
-        if self._task is not None:
-            task = self._task
+        if (task := self._task) is not None:
             task.cancel()
-            with suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                # Only the monitor task's cancellation is expected; propagate the caller's own.
+                if (current := asyncio.current_task()) and current.cancelling():
+                    raise
+        await self._async_release_unreleased()
+
+
+async def _async_release(
+    client: BleakClientWithServiceCache, session: ProbeSession | None
+) -> bool:
+    """Unsubscribe and disconnect. Return whether the session and the link are both released.
+
+    The disconnect and the release of session ownership run even if unsubscribing is cancelled,
+    so cancellation cannot leave the probe connected.
+    """
+    released = session is None
+    try:
+        if session is not None:
+            session.disconnected()
+            released = await _async_stop_session(session)
+    finally:
+        try:
+            async with asyncio.timeout(CLEANUP_TIMEOUT):
+                await client.disconnect()
+        except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
+            LOGGER.debug("Prediction disconnect failed: %s", err)
+        if session is not None and not released and not client.is_connected:
+            # A failed unsubscribe retains session ownership. Once disconnected, stop again to
+            # release that ownership without further Bluetooth I/O.
+            released = await _async_stop_session(session)
+    return released and not client.is_connected
+
+
+async def _async_stop_session(session: ProbeSession) -> bool:
+    """Stop a session within the cleanup deadline. Return whether it released the probe."""
+    try:
+        async with asyncio.timeout(CLEANUP_TIMEOUT):
+            await session.stop()
+    except Exception as err:  # Any failure leaves cleanup to be retried.
+        LOGGER.debug("Prediction subscription cleanup failed: %s", err)
+        return False
+    return True

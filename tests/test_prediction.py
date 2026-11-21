@@ -9,8 +9,9 @@ from combustion_ble import MeatNet
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import entity_registry as er
 
-from custom_components.combustion.const import CONF_ENABLE_PREDICTIONS
+from custom_components.combustion.const import CONF_ENABLE_PREDICTIONS, DOMAIN
 from custom_components.combustion.prediction import PredictionMonitor
 from tests.test_init import PROBE, get_state, setup_entry
 from tests.utils.bt_utils import (
@@ -104,7 +105,10 @@ async def test_prediction_entities(hass: HomeAssistant, connection, clock):
     )
     notify(client)
     await hass.async_block_till_done()
-    assert get_state(hass, "sensor", f"{PROBE}--prediction_target").state == "65.0"
+    target = get_state(hass, "sensor", f"{PROBE}--prediction_target")
+    assert target.state == "65.0"
+    # A set point is not a measurement, so it records no long-term statistics.
+    assert "state_class" not in target.attributes
     assert (
         get_state(hass, "sensor", f"{PROBE}--prediction_status").state == "predicting"
     )
@@ -262,11 +266,17 @@ async def test_disable_predictions_releases_connection(hass, connection):
     inject_bt_advertisement(hass, service_info(probe_payload()))
     await hass.async_block_till_done()
     notify(client)
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--prediction_target")
     hass.config_entries.async_update_entry(
         entry, options={CONF_ENABLE_PREDICTIONS: False}
     )
     await hass.async_block_till_done()
     client.disconnect.assert_awaited_once()
+    # Prediction sensors are removed rather than left behind as orphaned entities.
+    for key in ("prediction_target", "prediction_remaining", "prediction_status"):
+        assert not registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--{key}")
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--sensor--core")
     inject_bt_advertisement(hass, service_info(probe_payload(low_battery=True)))
     await hass.async_block_till_done()
     assert get_state(hass, "sensor", f"{PROBE}--sensor--core").state == "20.0"
@@ -346,7 +356,8 @@ async def test_reconnect_creates_fresh_session(hass, connection, clock):
         assert probe.prediction is None
         await connect(hass, monitor)
         assert establish.call_count == 1
-    with patch("custom_components.combustion.prediction.monotonic", return_value=161):
+    # A working session that drops reconnects after a short delay, not the failure backoff.
+    with patch("custom_components.combustion.prediction.monotonic", return_value=106):
         await connect(hass, monitor)
     assert establish.call_count == 2
     assert (
@@ -410,4 +421,114 @@ async def test_disconnect_error_after_connection_closed(hass, connection, clock)
     client.disconnect.side_effect = failed_disconnect
     await monitor.async_stop()
     assert probe.prediction is None
+    assert not client.is_connected
+
+
+def stalled_unsubscribe(client):
+    """Make unsubscribing wait until released. Return the started and release events."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stop_notify(_characteristic):
+        started.set()
+        await release.wait()
+
+    client.stop_notify.side_effect = stop_notify
+    return started, release
+
+
+async def test_probe_heard_while_unloading_is_not_connected(hass, connection):
+    """Advertisements arriving while connections are released must not start new ones."""
+    client, establish = connection
+    entry = await setup_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_ENABLE_PREDICTIONS: True}
+    )
+    await hass.async_block_till_done()
+    inject_bt_advertisement(hass, service_info(probe_payload()))
+    await hass.async_block_till_done()
+    assert establish.call_count == 1
+    coordinator = entry.runtime_data
+    unsubscribing, release = stalled_unsubscribe(client)
+    unload = hass.async_create_task(hass.config_entries.async_unload(entry.entry_id))
+    await unsubscribing.wait()
+    # Still listening: the entry stops listening only after unloading finishes.
+    other = 0x10002CCC
+    inject_bt_advertisement(
+        hass,
+        service_info(probe_payload(serial_number=other), address="CC:CC:CC:CC:CC:04"),
+    )
+    release.set()
+    assert await unload
+    assert establish.call_count == 1
+    assert other not in coordinator.predictions
+    assert not client.is_connected
+
+
+async def test_unreleased_session_is_cleaned_up_before_reconnecting(
+    hass, connection, clock
+):
+    """A link that could not be closed is retried, never stacked under a new connection."""
+    client, establish = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+    disconnect = client.disconnect.side_effect
+    client.start_notify.side_effect = [None, BleakError("subscribe failed")]
+    client.stop_notify.side_effect = BleakError("unsubscribe failed")
+    client.disconnect.side_effect = BleakError("disconnect failed")
+    with patch("custom_components.combustion.prediction.monotonic", return_value=100):
+        await connect(hass, monitor)
+    assert establish.call_count == 1
+    assert client.is_connected
+    # Cleanup still fails, so no second connection is opened while the first holds a slot.
+    with patch("custom_components.combustion.prediction.monotonic", return_value=161):
+        await connect(hass, monitor)
+    assert establish.call_count == 1
+    client.start_notify.side_effect = None
+    client.stop_notify.side_effect = None
+    client.disconnect.side_effect = disconnect
+    with patch("custom_components.combustion.prediction.monotonic", return_value=222):
+        await connect(hass, monitor)
+    assert establish.call_count == 2
+    notify(client, seconds=30)
+    assert probe.prediction.seconds_remaining == 30
+    await monitor.async_stop()
+    assert not client.is_connected
+
+
+async def test_cancel_during_unsubscribe_still_disconnects(hass, connection, clock):
+    """Cancelling cleanup, for example at shutdown, still closes the link and releases the probe."""
+    client, establish = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+    await connect(hass, monitor)
+    unsubscribing, _ = stalled_unsubscribe(client)
+    task = monitor._task
+    task.cancel()
+    await unsubscribing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    client.disconnect.assert_awaited_once()
+    assert not client.is_connected
+    client.stop_notify.side_effect = None
+    replacement = PredictionMonitor(hass, meatnet, probe)
+    await connect(hass, replacement)
+    assert establish.call_count == 2
+    notify(client, seconds=30)
+    assert probe.prediction.seconds_remaining == 30
+    await replacement.async_stop()
+
+
+async def test_stop_propagates_its_own_cancellation(hass, connection, clock):
+    """Stopping a monitor must not swallow a cancellation aimed at the caller."""
+    client, _ = connection
+    monitor, meatnet, probe = make_monitor(hass, clock)
+    await connect(hass, monitor)
+    unsubscribing, release = stalled_unsubscribe(client)
+    stopping = hass.async_create_task(monitor.async_stop())
+    await unsubscribing.wait()
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    release.set()
+    await hass.async_block_till_done()
     assert not client.is_connected

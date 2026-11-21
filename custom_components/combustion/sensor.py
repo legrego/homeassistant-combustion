@@ -8,6 +8,9 @@ from typing import Any
 
 from combustion_ble import Device, Gauge, PredictionMode, PredictionState, Probe
 from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
+)
+from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -20,6 +23,7 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
@@ -134,6 +138,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add sensors for each probe and gauge as it is discovered."""
+    if not entry.runtime_data.enable_predictions:
+        _async_remove_prediction_entities(hass, entry)
 
     @callback
     def _async_add_device(device: Device) -> None:
@@ -152,6 +158,18 @@ async def async_setup_entry(
     entry.async_on_unload(
         entry.runtime_data.async_add_device_listener(_async_add_device)
     )
+
+
+@callback
+def _async_remove_prediction_entities(
+    hass: HomeAssistant, entry: CombustionConfigEntry
+) -> None:
+    """Remove prediction sensors left in the registry after predictions are disabled."""
+    registry = er.async_get(hass)
+    suffixes = tuple(f"--{description.key}" for description in PREDICTION_SENSORS)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if entity.domain == SENSOR_DOMAIN and entity.unique_id.endswith(suffixes):
+            registry.async_remove(entity.entity_id)
 
 
 class CombustionSensor(CombustionEntity, SensorEntity):
@@ -197,6 +215,8 @@ PREDICTION_SENSORS = (
             else None
         ),
         translation_key="prediction_target",
+        # A target chosen in the app, not a measurement, so it has no long-term statistics.
+        state_class=None,
     ),
     CombustionSensorEntityDescription(
         key="prediction_remaining",

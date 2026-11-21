@@ -41,6 +41,7 @@ class CombustionCoordinator:
         self.hass = hass
         self.enable_predictions = enable_predictions
         self.predictions: dict[int, PredictionMonitor] = {}
+        self._predictions_stopped = False
         self.meatnet = MeatNet()
         self._handled_times: dict[str, float] = {}
         self.meatnet.add_device_listener(self._async_log_availability)
@@ -113,7 +114,7 @@ class CombustionCoordinator:
     ) -> None:
         self._handled_times[service_info.address] = service_info.time
         self.meatnet.handle_service_info(service_info)
-        if self.enable_predictions:
+        if self.enable_predictions and not self._predictions_stopped:
             payload = service_info.manufacturer_data.get(COMBUSTION_MANUFACTURER_ID)
             advertisement = (
                 parse_advertisement(payload) if payload is not None else None
@@ -152,6 +153,14 @@ class CombustionCoordinator:
         return self.predictions[probe.serial_number]
 
     async def async_stop_predictions(self) -> None:
-        """Release all direct probe connections during unload."""
-        for monitor in self.predictions.values():
+        """Release all direct probe connections during unload.
+
+        Advertisements keep arriving until the entry's unload callbacks stop listening, which
+        happens after this returns. Stop starting monitors first, so none is created or connects
+        while existing ones are being stopped.
+        """
+        self._predictions_stopped = True
+        # Stopped in turn, in this task, so a connection that has not started yet is cancelled
+        # before it can connect.
+        for monitor in list(self.predictions.values()):
             await monitor.async_stop()

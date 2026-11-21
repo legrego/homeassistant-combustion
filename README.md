@@ -58,11 +58,11 @@ A device becomes unavailable when it hasn't been heard, directly or through a re
 
 ## Cooking predictions
 
-Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors for each probe.
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors for each probe. Disabling the option releases the connections and removes these sensors.
 
 This requires a Bluetooth adapter or proxy that supports active connections, with the probe itself in range. Each probe supports three simultaneous connections; Home Assistant uses one. Existing passive temperature sensors continue to work without connections.
 
-Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. Failed connections retry after at least 60 seconds, when another direct advertisement is received.
+Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. When a working connection drops, the integration reconnects after about 5 seconds; failed connections retry after at least 60 seconds. Either way, it reconnects when another direct advertisement is received.
 
 ### Capture a local prediction report
 
