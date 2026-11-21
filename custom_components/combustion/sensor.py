@@ -261,13 +261,36 @@ PREDICTION_SENSORS = (
 # SafeCook comes from the same connected status as predictions, so it shares their option.
 
 
+def _program_set(food_safe: FoodSafe) -> bool:
+    """Whether the probe has a SafeCook program.
+
+    Turning SafeCook off in the Combustion app writes an all-zero program, which decodes as
+    Simplified mode with a 0 °C threshold. No real program has that threshold or a 0 log target.
+    """
+    return any(
+        (
+            food_safe.mode,
+            food_safe.product,
+            food_safe.serving,
+            food_safe.threshold_temperature,
+            food_safe.z_value,
+            food_safe.reference_temperature,
+            food_safe.d_value,
+            food_safe.target_log_reduction,
+        )
+    )
+
+
 def _food_safe_value(
     fn: Callable[[FoodSafe], StateType], *, integrated_only: bool = False
 ) -> Callable[[Probe], StateType]:
-    """Read from the probe's SafeCook data, which is unknown until a connection reports it."""
+    """Read from the probe's SafeCook program.
+
+    Unknown until a connection reports SafeCook data, and while SafeCook is off.
+    """
 
     def value(probe: Probe) -> StateType:
-        if (food_safe := probe.food_safe) is None:
+        if (food_safe := probe.food_safe) is None or not _program_set(food_safe):
             return None
         if integrated_only and food_safe.mode is not FoodSafeMode.INTEGRATED:
             # Simplified mode always reports 0, which would read as no progress.
@@ -303,6 +326,16 @@ FOOD_SAFETY_SERVINGS = {
 }
 
 
+def _food_safety_state(probe: Probe) -> str | None:
+    if (food_safe := probe.food_safe) is None:
+        return None
+    if not _program_set(food_safe):
+        return "off"
+    if isinstance(food_safe.state, FoodSafeState):
+        return FOOD_SAFETY_STATES[food_safe.state]
+    return None
+
+
 def _food_safety_product(food_safe: FoodSafe) -> str | None:
     product = food_safe.product
     # Unknown products are kept as plain integers.
@@ -316,14 +349,8 @@ FOOD_SAFETY_SENSORS = (
         key="food_safety",
         translation_key="food_safety",
         device_class=SensorDeviceClass.ENUM,
-        options=list(FOOD_SAFETY_STATES.values()),
-        value_fn=_food_safe_value(
-            lambda food_safe: (
-                FOOD_SAFETY_STATES[food_safe.state]
-                if isinstance(food_safe.state, FoodSafeState)
-                else None
-            )
-        ),
+        options=["off", *FOOD_SAFETY_STATES.values()],
+        value_fn=_food_safety_state,
     ),
     _temperature(
         "food_safety_threshold",

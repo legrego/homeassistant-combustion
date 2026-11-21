@@ -51,6 +51,7 @@
             "food_safety": {
                 "name": "Food safety",
                 "state": {
+                    "off": "Off",
                     "not_safe": "Not safe",
                     "safe": "Safe",
                     "safety_impossible": "Safety impossible"

@@ -147,3 +147,75 @@ async def test_food_safety_through_repeater(hass: HomeAssistant, connections):  
         == "integrated_meats_ground"
     )
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+# Food safe data and status bytes relayed by a Booster, from capture reports on 2026-11-21.
+CAPTURED_OFF = bytes(18)
+CAPTURED_POULTRY = bytes.fromhex("010084c40fc0129c6904") + bytes(8)
+CAPTURED_MEATS_GROUND = bytes.fromhex("1100e8840ec012541404") + bytes(8)
+
+
+@pytest.mark.parametrize(
+    ("food_safe", "expected"),
+    [
+        (
+            CAPTURED_POULTRY,
+            {
+                "food_safety": "not_safe",
+                "food_safety_threshold": "57.8",
+                "food_safety_time_above_threshold": "0",
+                "food_safety_log_reduction": "0.0",
+                "food_safety_target_log_reduction": "7.0",
+                "food_safety_product": "integrated_poultry",
+                "food_safety_serving": "served_immediately",
+            },
+        ),
+        (
+            CAPTURED_MEATS_GROUND,
+            {
+                "food_safety": "not_safe",
+                "food_safety_threshold": "62.8",
+                "food_safety_time_above_threshold": "0",
+                "food_safety_log_reduction": "0.0",
+                "food_safety_target_log_reduction": "6.5",
+                "food_safety_product": "integrated_meats_ground",
+                "food_safety_serving": "served_immediately",
+            },
+        ),
+        # Turning SafeCook off in the app writes an all-zero program.
+        (CAPTURED_OFF, dict.fromkeys(KEYS, STATE_UNKNOWN) | {"food_safety": "off"}),
+    ],
+    ids=["poultry", "meats_ground", "off"],
+)
+async def test_captured_programs(
+    hass: HomeAssistant,
+    connections,  # noqa: F811
+    food_safe,
+    expected,
+):
+    """Programs captured from real hardware decode to the expected sensor states."""
+    entry = await enable_predictions(hass)
+    relay(hass)
+    await hass.async_block_till_done()
+    await tick(hass, entry)
+    connections.emit(NODE_ADDRESS, node_status_frame(food_safe=food_safe))
+    await hass.async_block_till_done()
+    assert states(hass) == expected
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_turning_safecook_off(hass: HomeAssistant, connection):  # noqa: F811
+    """Turning SafeCook off clears the program sensors, and turning it on restores them."""
+    entry, _, send = await connect_direct(hass, connection)
+    await send(food_safe=food_safe_bytes())
+    assert get_state(hass, "sensor", f"{PROBE}--food_safety").state == "not_safe"
+    await send(food_safe=CAPTURED_OFF)
+    assert states(hass) == dict.fromkeys(KEYS, STATE_UNKNOWN) | {"food_safety": "off"}
+    # A Simplified program for the default product is a real program, not off.
+    await send(food_safe=food_safe_bytes(mode=0, product=0, threshold=73.9))
+    assert get_state(hass, "sensor", f"{PROBE}--food_safety").state == "not_safe"
+    assert (
+        get_state(hass, "sensor", f"{PROBE}--food_safety_product").state
+        == "simplified_default"
+    )
+    assert await hass.config_entries.async_unload(entry.entry_id)

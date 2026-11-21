@@ -74,14 +74,14 @@ The same connection reports each probe's SafeCook program and its progress. Choo
 
 Sensor | Description
 -- | --
-Food safety | Not safe, safe, or safety impossible. Use it to trigger automations when food becomes safe.
+Food safety | Off, not safe, safe, or safety impossible. Use it to trigger automations when food becomes safe.
 Food safety threshold temperature | The program's threshold temperature. In Simplified mode, food is safe once the core reaches it.
 Time above food safety threshold | How long the core has been above the threshold.
 Food safety log reduction | Integrated mode only: the pathogen log reduction so far.
 Food safety target log reduction | Integrated mode only: the log reduction that makes the food safe.
 Food safety product, Food safety serving | The program's product and serving (diagnostic).
 
-All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. Probes report a program even when none has been chosen in the app, so these sensors show that default program in that case.
+All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off in the app, food safety is **Off** and the other SafeCook sensors are unknown.
 
 ### Capture a local prediction report
 
