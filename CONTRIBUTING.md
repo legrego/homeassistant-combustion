@@ -63,14 +63,15 @@ The Home Assistant version in `pyproject.toml` must match the `homeassistant` ke
 
 ### Prediction API
 
-The integration uses `ProbeSession` and immutable predictions from the published
-`combustion_ble` 0.5.0 release. Keep the dependency in the manifest and `pyproject.toml`
+The integration uses `ProbeSession`, `NodeSession`, `plan_connections()`, and immutable
+predictions from the published `combustion_ble` 0.6.0 release. Keep the dependency in the manifest and `pyproject.toml`
 in sync when updating it. The session contract test verifies that cancellation preserves
 Home Assistant's subscription deadline even when notification cleanup stalls.
 
 The library owns status subscriptions, decoding, immutable prediction snapshots, countdowns,
-and prediction expiry. Home Assistant owns adapter selection, connection setup, retries,
-and disconnects. Prediction entities subscribe through the same probe listeners as temperatures.
+prediction expiry, and the rules for which connections to hold (`plan_connections()`: which
+repeater to try, which probes need a direct connection, and which to release). Home Assistant
+owns adapter selection, connection setup, retries, and disconnects. Prediction entities subscribe through the same probe listeners as temperatures.
 The capture script also uses `ProbeSession`, so its output tests this dependency rather than a separate parser path.
 
 ### Running tests

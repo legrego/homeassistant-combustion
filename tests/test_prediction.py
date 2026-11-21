@@ -222,26 +222,6 @@ async def test_no_connectable_adapter(hass, connection, clock):
     await monitor.async_stop()
 
 
-async def test_repeaters_are_not_connected(hass, connection):
-    """Relayed probes get unknown predictions without connecting to the repeater."""
-    _, establish = connection
-    entry = await setup_entry(hass)
-    hass.config_entries.async_update_entry(
-        entry, options={CONF_ENABLE_PREDICTIONS: True}
-    )
-    await hass.async_block_till_done()
-    inject_bt_advertisement(
-        hass, service_info(probe_payload(hop=0), address=NODE_ADDRESS)
-    )
-    await hass.async_block_till_done()
-    establish.assert_not_called()
-    assert (
-        get_state(hass, "sensor", f"{PROBE}--prediction_remaining").state
-        == STATE_UNKNOWN
-    )
-    assert await hass.config_entries.async_unload(entry.entry_id)
-
-
 async def test_options(hass):
     """The options flow stores the connection choice and defaults it to off."""
     entry = await setup_entry(hass)

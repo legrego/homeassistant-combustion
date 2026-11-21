@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from combustion_ble import (
     COMBUSTION_MANUFACTURER_ID,
+    ConnectionPlan,
     Device,
     MeatNet,
     Probe,
     ProbeAdvertisement,
     parse_advertisement,
+    plan_connections,
 )
 from combustion_ble.meatnet import DEFAULT_STALE_TIMEOUT
 from homeassistant.components import bluetooth
@@ -20,7 +23,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import LOGGER
-from .prediction import PredictionMonitor
+from .prediction import PredictionMonitor, RepeaterMonitor
 
 EXPIRE_INTERVAL = timedelta(seconds=1)
 
@@ -31,7 +34,9 @@ class CombustionCoordinator:
     """Keeps a MeatNet up to date with advertisements from Home Assistant's Bluetooth integration.
 
     Home Assistant owns all scanning. Temperature readings work with passive adapters and proxies.
-    Optional prediction monitors connect directly to probes through connectable adapters.
+    Optional predictions use connectable adapters: one connection to a MeatNet repeater, which
+    relays predictions for every probe on its network, and direct connections only to probes the
+    repeater is not reporting.
     """
 
     def __init__(
@@ -41,8 +46,15 @@ class CombustionCoordinator:
         self.hass = hass
         self.enable_predictions = enable_predictions
         self.predictions: dict[int, PredictionMonitor] = {}
+        """Direct probe connections, by probe serial number."""
         self._predictions_stopped = False
         self.meatnet = MeatNet()
+        self.repeater = (
+            RepeaterMonitor(hass, self.meatnet) if enable_predictions else None
+        )
+        # Direct connections being released because the repeater reports their probes. A probe
+        # gets no new direct connection until its old session has let go of the probe.
+        self._retiring: dict[int, asyncio.Task] = {}
         self._handled_times: dict[str, float] = {}
         self.meatnet.add_device_listener(self._async_log_availability)
 
@@ -124,9 +136,14 @@ class CombustionCoordinator:
                 and advertisement.has_probe
                 and not advertisement.is_repeated
             ):
-                self.prediction_for(
-                    self.meatnet.probes[advertisement.serial_number]
-                ).async_connect(service_info.address)
+                serial_number = advertisement.serial_number
+                if (
+                    serial_number in self._plan().direct
+                    and serial_number not in self._retiring
+                ):
+                    self.prediction_for(
+                        self.meatnet.probes[serial_number]
+                    ).async_connect(service_info.address)
 
     @callback
     def _async_tick(self, _now: datetime) -> None:
@@ -142,6 +159,49 @@ class CombustionCoordinator:
                 self._async_handle_service_info(service_info)
 
         self.meatnet.expire()
+        if self.repeater is not None and not self._predictions_stopped:
+            self._async_manage_connections(self.repeater)
+
+    def _plan(self) -> ConnectionPlan:
+        """Ask the library which prediction connections to hold."""
+        repeater = self.repeater
+        return plan_connections(
+            self.meatnet,
+            repeater=repeater.session if repeater is not None else None,
+            failed=(
+                {repeater.failed_address}
+                if repeater is not None and repeater.failed_address is not None
+                else ()
+            ),
+        )
+
+    @callback
+    def _async_manage_connections(self, repeater: RepeaterMonitor) -> None:
+        """Keep a repeater connected, and release direct connections it makes redundant."""
+        plan = self._plan()
+        if repeater.can_connect:
+            for address in plan.repeaters:
+                if repeater.async_connect(address):
+                    break
+        for serial_number in plan.release & self.predictions.keys():
+            monitor = self.predictions.pop(serial_number)
+            probe = self.meatnet.probes[serial_number]
+            LOGGER.debug(
+                "Releasing direct connection to %s: a MeatNet repeater reports it",
+                probe,
+            )
+            # Bounded by the monitor's cleanup deadlines, so it is safe to track.
+            task = self.hass.async_create_task(
+                monitor.async_stop(),
+                f"Combustion release {probe.serial_number_string}",
+                eager_start=False,
+            )
+            self._retiring[serial_number] = task
+            task.add_done_callback(
+                lambda _task, serial_number=serial_number: self._retiring.pop(
+                    serial_number, None
+                )
+            )
 
     @callback
     def prediction_for(self, probe: Probe) -> PredictionMonitor:
@@ -153,7 +213,7 @@ class CombustionCoordinator:
         return self.predictions[probe.serial_number]
 
     async def async_stop_predictions(self) -> None:
-        """Release all direct probe connections during unload.
+        """Release all prediction connections during unload.
 
         Advertisements keep arriving until the entry's unload callbacks stop listening, which
         happens after this returns. Stop starting monitors first, so none is created or connects
@@ -164,3 +224,7 @@ class CombustionCoordinator:
         # before it can connect.
         for monitor in list(self.predictions.values()):
             await monitor.async_stop()
+        if self.repeater is not None:
+            await self.repeater.async_stop()
+        if self._retiring:
+            await asyncio.gather(*self._retiring.values(), return_exceptions=True)
