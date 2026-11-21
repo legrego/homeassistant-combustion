@@ -23,7 +23,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.combustion import async_remove_config_entry_device
-from custom_components.combustion.const import DOMAIN, MEATNET_UNIQUE_ID
+from custom_components.combustion.const import DOMAIN, MEATNET_UNIQUE_ID, STALE_TIMEOUT
 from tests.conftest import FakeClock
 from tests.utils.bt_utils import (
     GAUGE_ADDRESS,
@@ -240,7 +240,9 @@ async def test_probe_becomes_unavailable_then_recovers(
     inject_bt_advertisement(hass, service_info(probe_payload(), time=time.monotonic()))
     await hass.async_block_till_done()
 
-    await advance(hass, clock, 14)
+    # Home Assistant can go a minute or more without passing along an advertisement from a weak
+    # scanner, so a probe stays available well past the library's 15 second default.
+    await advance(hass, clock, STALE_TIMEOUT - 1)
     assert get_state(hass, "sensor", f"{PROBE}--sensor--core").state == "20.0"
 
     await advance(hass, clock, 2)
@@ -267,7 +269,7 @@ async def test_probe_becomes_unavailable_then_recovers(
         if record.name.startswith("custom_components.combustion")
     ]
     assert messages == [
-        "Probe(10001CCC) is unavailable: not heard directly or through MeatNet for 15 seconds",
+        f"Probe(10001CCC) is unavailable: not heard directly or through MeatNet for {STALE_TIMEOUT} seconds",
         "Probe(10001CCC) is available again",
     ]
 
@@ -406,7 +408,7 @@ async def test_reload(hass: HomeAssistant, clock: FakeClock) -> None:
     assert get_state(hass, "binary_sensor", f"{GAUGE}--battery").state == STATE_OFF
 
     # The expiry timer must also be running again after the reload.
-    await advance(hass, clock, 16)
+    await advance(hass, clock, STALE_TIMEOUT + 1)
     assert (
         get_state(hass, "sensor", f"{PROBE}--sensor--core").state == STATE_UNAVAILABLE
     )

@@ -16,13 +16,12 @@ from combustion_ble import (
     parse_advertisement,
     plan_connections,
 )
-from combustion_ble.meatnet import DEFAULT_STALE_TIMEOUT
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import LOGGER
+from .const import LOGGER, STALE_TIMEOUT
 from .prediction import PredictionMonitor, RepeaterMonitor
 
 EXPIRE_INTERVAL = timedelta(seconds=1)
@@ -48,7 +47,7 @@ class CombustionCoordinator:
         self.predictions: dict[int, PredictionMonitor] = {}
         """Direct probe connections, by probe serial number."""
         self._predictions_stopped = False
-        self.meatnet = MeatNet()
+        self.meatnet = MeatNet(stale_timeout=STALE_TIMEOUT)
         self.repeater = (
             RepeaterMonitor(hass, self.meatnet) if enable_predictions else None
         )
@@ -114,7 +113,7 @@ class CombustionCoordinator:
                 LOGGER.info(
                     "%s is unavailable: not heard directly or through MeatNet for %d seconds",
                     device,
-                    DEFAULT_STALE_TIMEOUT,
+                    STALE_TIMEOUT,
                 )
 
         device.add_listener(_async_on_change)

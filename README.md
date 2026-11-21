@@ -54,7 +54,7 @@ It can hear a probe directly, or through a MeatNet repeater such as the [Range-E
 
 Probes, gauges, and repeaters broadcast their readings several times a second, and entities update as soon as a reading changes. Nothing is polled.
 
-A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 15 seconds. Probes don't broadcast while they're in their charger, so they show as unavailable there.
+A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 2 minutes. Home Assistant passes along each device's advertisements from only one Bluetooth adapter or proxy at a time, which can go a minute or more between them when its signal is weak. Probes don't broadcast while they're in their charger, so they show as unavailable there.
 
 ## Cooking predictions
 
