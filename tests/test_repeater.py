@@ -85,6 +85,8 @@ class Connections:
         """How many disconnects fail, leaving the client connected."""
         self.stalled_reads: set[str] = set()
         """Addresses whose characteristic reads never complete."""
+        self.disconnect_gate: asyncio.Event | None = None
+        """When set, disconnects wait for this event, as a slow disconnect would."""
         self.commands_expected = False
         """Whether the test sets targets. Otherwise any target set fails the test."""
         self.command_success = True
@@ -105,6 +107,8 @@ class Connections:
             client.callbacks[characteristic] = callback
 
         async def disconnect():
+            if self.disconnect_gate is not None:
+                await self.disconnect_gate.wait()
             if self.failing_disconnects:
                 self.failing_disconnects -= 1
                 raise BleakError("disconnect failed")

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
-from contextlib import suppress
 from time import monotonic
 from typing import Any
 
@@ -89,6 +88,8 @@ class _ConnectionMonitor:
         """Address of the device the running session is connected to."""
         self._unrun_result: bool | None = None
         """What reads that never ran are reported as."""
+        self._connecting = False
+        """Whether the running attempt is connecting or subscribing, before its session runs."""
 
     @callback
     def async_request_read(self, name: str, read: Read, done: ReadDone) -> bool:
@@ -133,14 +134,17 @@ class _ConnectionMonitor:
                 ended.cancel()
                 if not reading.done():
                     reading.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await reading
+                    # Unlike awaiting the read, this doesn't swallow this task's own cancellation.
+                    await asyncio.wait((reading,))
                 done(
                     None
                     if reading.cancelled() or reading.exception() is not None
                     else reading.result()
                 )
-            reading.result()  # Raise unexpected read errors, as before.
+            if not reading.cancelled():
+                # Raise unexpected read errors, as before. A read stopped because the session
+                # ended is not an error: the session ran, so it reconnects after the usual delay.
+                reading.result()
 
     @callback
     def _async_drop_reads(self, result: bool | None) -> None:
@@ -216,6 +220,7 @@ class _ConnectionMonitor:
             disconnected.set()
             self._wake.set()
 
+        self._connecting = True
         try:
             client = await establish_connection(
                 BleakClientWithServiceCache,
@@ -232,6 +237,7 @@ class _ConnectionMonitor:
             async with asyncio.timeout(SUBSCRIBE_TIMEOUT):
                 await session.start()
             subscribed = True
+            self._connecting = False
             self._session = session
             self._session_ended = disconnected
             self.address = device.address
@@ -239,6 +245,7 @@ class _ConnectionMonitor:
         except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
             LOGGER.debug("Prediction connection to %s failed: %s", device.address, err)
         finally:
+            self._connecting = False
             self._session = None
             self._session_ended = None
             self.address = None
@@ -384,6 +391,8 @@ class RevisionMonitor(_ConnectionMonitor):
         self._probe: Probe | None = None
         self._target: str | None = None
         """Address of the device the current or unreleased connection is for."""
+        self._abandoned = False
+        """Whether the current connection has been asked to give way."""
 
     @property
     def held_address(self) -> str | None:
@@ -397,10 +406,22 @@ class RevisionMonitor(_ConnectionMonitor):
 
     @callback
     def async_cancel(self) -> None:
-        """Abandon the running connection, releasing it. Its unrun reads count as not tried."""
-        if self._task is not None:
-            self._unrun_result = None
+        """Abandon the running connection, releasing it. Its unrun reads count as not tried.
+
+        Repeated calls do nothing more, and cleanup that has started always runs to completion:
+        interrupting a slow disconnect would hold the device until a later cleanup retry.
+        """
+        if self._task is None or self._abandoned:
+            return
+        self._abandoned = True
+        self._unrun_result = None
+        if self._session_ended is not None:
+            # Connected: end the session, which stops its read, then disconnects.
+            self._async_end_session()
+        elif self._connecting:
+            # Not connected yet, and establishing the connection doesn't watch for an ending.
             self._task.cancel()
+        # Otherwise cleanup is already underway.
 
     @callback
     def async_read(
@@ -416,6 +437,7 @@ class RevisionMonitor(_ConnectionMonitor):
             return False
         self._probe = probe
         self._target = address
+        self._abandoned = False
         # The connection is the attempt, so reads it never runs have failed.
         self._unrun_result = False
         self._reads = dict(reads)

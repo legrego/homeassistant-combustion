@@ -1,6 +1,7 @@
 """Setting and cancelling a probe's cooking target from Home Assistant."""
 
 import asyncio
+from time import monotonic
 
 import pytest
 from bleak.exc import BleakError
@@ -14,6 +15,7 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.combustion.const import DOMAIN, MEATNET_UNIQUE_ID
+from custom_components.combustion.prediction import RECONNECT_DELAY
 from tests.test_init import PROBE, get_state, setup_entry
 from tests.test_prediction import connection, notify  # noqa: F401 - fixture
 from tests.test_repeater import (
@@ -155,6 +157,9 @@ async def test_failure_interrupts_revision_read(hass: HomeAssistant, connection)
     assert err.value.translation_key == "not_connected"
     await settle(hass)
     client.disconnect.assert_awaited_once()
+    # The session ran, so it reconnects after the usual delay, not the failure backoff.
+    monitor = entry.runtime_data.predictions[PROBE_SERIAL]
+    assert monitor._retry_at <= monotonic() + RECONNECT_DELAY
     await tick(hass, entry)
     assert get_state(hass, "number", TARGET).state == STATE_UNAVAILABLE
 

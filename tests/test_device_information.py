@@ -444,3 +444,41 @@ async def test_brief_read_gives_way_to_repeater(hass: HomeAssistant, connections
     assert repeater.session is not None
     assert repeater.address == GAUGE_ADDRESS
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_slow_brief_disconnect_finishes_before_handoff(
+    hass: HomeAssistant,
+    connections,  # noqa: F811
+):
+    """A brief connection that is slow to disconnect is left to finish across ticks."""
+    connections.stalled_reads.add(GAUGE_ADDRESS)
+    entry = await enable_predictions(hass)
+    relay(hass)
+    inject_bt_advertisement(
+        hass, service_info(gauge_payload(), address=GAUGE_ADDRESS, rssi=-80)
+    )
+    await settle(hass, entry)
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, GAUGE_ADDRESS]
+    gauge = connections.clients[GAUGE_ADDRESS]
+
+    connections.unreachable.add(NODE_ADDRESS)
+    connections.clients[NODE_ADDRESS].drop()
+    await hass.async_block_till_done()
+    connections.disconnect_gate = asyncio.Event()
+    repeater = entry.runtime_data.repeater
+    repeater._retry_at = 0
+    # The gauge stays held for several ticks while its disconnect runs.
+    for _ in range(3):
+        await settle(hass, entry)
+    assert gauge.disconnect.await_count == 1
+    assert entry.runtime_data.revisions.held_address == GAUGE_ADDRESS
+
+    connections.disconnect_gate.set()
+    await settle(hass, entry)
+    assert not gauge.is_connected
+    assert entry.runtime_data.revisions.held_address is None
+    await settle(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS, GAUGE_ADDRESS, GAUGE_ADDRESS]
+    assert repeater.address == GAUGE_ADDRESS
+    assert await hass.config_entries.async_unload(entry.entry_id)
