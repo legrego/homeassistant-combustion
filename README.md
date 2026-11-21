@@ -10,7 +10,7 @@ Integrate [Combustion](https://combustion.inc) Predictive Thermometers and Giant
 
 Device | Entities
 -- | --
-Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target, time remaining, and prediction status, and SafeCook food safety.
+Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target (settable), time remaining, and prediction status, and SafeCook food safety.
 Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
 
 By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions and SafeCook use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise.
@@ -42,7 +42,7 @@ One setup covers every Combustion device in range. New devices are added automat
 
 No address, account, or credentials are required. The integration listens for advertisements through Home Assistant's Bluetooth integration. Cooking predictions and SafeCook can be enabled in the integration options.
 
-The integration provides sensor entities. It does not define its own actions, triggers, or conditions; you can use the entities with Home Assistant's standard state and numeric state automation triggers and conditions.
+The integration provides sensor and binary sensor entities, and, with cooking predictions on, a cooking target number and a cancel button. It does not define its own actions, triggers, or conditions; use the entities with Home Assistant's standard triggers, conditions, and actions, such as `number.set_value` and `button.press`.
 
 ## Supported devices
 
@@ -52,13 +52,19 @@ It can hear a probe directly, or through a MeatNet repeater such as the [Range-E
 
 ## How data is updated
 
-Probes, gauges, and repeaters broadcast their readings several times a second, and entities update as soon as a reading changes. Nothing is polled.
+Probes, gauges, and repeaters broadcast their readings several times a second, and entities update as soon as a reading changes. Readings are never polled; only [firmware and hardware versions](#firmware-and-hardware-versions) are read on a schedule.
 
 A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 2 minutes. Home Assistant passes along each device's advertisements from only one Bluetooth adapter or proxy at a time, which can go a minute or more between them when its signal is weak. Probes don't broadcast while they're in their charger, so they show as unavailable there.
 
+## Firmware and hardware versions
+
+Each probe's and Giant Grill Gauge's device page shows its firmware and hardware versions. Advertisements don't include them, so the integration reads them over a connection: soon after a device is first heard while it's online, then once a day while it stays online. Devices that are only on while you cook are read the next time they're in use. If a read fails, that device is tried again after 15 minutes. Home Assistant keeps the last versions read, so they still show while a device is off.
+
+When cooking predictions are on, their connections also read versions. Otherwise the integration connects briefly, reads the versions, and disconnects: to a repeater that relays the probe, which reads every probe it relays in one connection, or else to the probe itself, using one of its three connection slots for a few seconds. Only one such connection is made at a time. Reading versions needs a Bluetooth adapter or proxy that supports active connections; with only passive adapters, versions stay unknown and everything else works as usual.
+
 ## Cooking predictions
 
-Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds cooking target temperature, time remaining, and prediction status sensors, and [SafeCook sensors](#safecook-food-safety), for each probe. Disabling the option releases the connections and removes these sensors.
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors](#safecook-food-safety). Disabling the option releases the connections and removes these entities.
 
 This requires a Bluetooth adapter or proxy that supports active connections. Existing passive temperature sensors continue to work without connections.
 
@@ -66,7 +72,19 @@ When a MeatNet repeater (a Range-Extending Booster, Range-Extending Display, Gia
 
 Probes the repeater isn't reporting, or every probe when no repeater is available, get a direct connection instead, with the probe itself in range. Each probe supports three simultaneous connections; a direct connection uses one. Once the repeater reports a probe, its direct connection is released, so a probe may briefly have both connections at startup. If the repeater connection is lost, probes in direct range reconnect directly.
 
-Set the target using the Combustion app or Display. Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Repeaters relay each probe's status about every 5 seconds; direct connections update about every second. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. When a working connection drops, the integration reconnects after about 5 seconds; failed connections retry after at least 60 seconds. Direct connections also reconnect when another direct advertisement is received.
+Time remaining stays unknown until the probe provides a usable prediction, then counts down in seconds. Repeaters relay each probe's status about every 5 seconds; direct connections update about every second. Prediction status distinguishes warming, predicting, and ready. Missing status updates expire after 15 seconds; disconnects clear predictions immediately. When a working connection drops, the integration reconnects after about 5 seconds; failed connections retry after at least 60 seconds. Direct connections also reconnect when another direct advertisement is received.
+
+### Setting the cooking target
+
+Set **Cooking target temperature** to start a removal prediction, and press **Cancel cooking target** to turn it off. Both work in dashboards and automations, through the standard `number.set_value` and `button.press` actions, and the Combustion app or Display can still change the target too. Targets range from 0 to 102.3 °C (32 to 216.1 °F), in steps of 0.1 °C.
+
+Commands go through the connection that reports the probe's predictions: the repeater, or the direct connection. Both entities are unavailable while no connection reports the probe. The target shows the value the probe reports, so it updates with the probe's next status, within about 5 seconds through a repeater, rather than when the command is sent. If the probe or repeater rejects a command, or doesn't acknowledge it in time, the action fails with an error. A failed command over a direct connection also reconnects it.
+
+The cooking target used to be a read-only sensor. It is now a number entity, so dashboards and automations that used `sensor.<probe>_cooking_target_temperature` need to use `number.<probe>_cooking_target_temperature` instead.
+
+### Firmware and hardware versions
+
+Prediction connections also read firmware and hardware versions, shown on each probe's and Giant Grill Gauge's device page. A direct connection reads its probe's versions; a repeater connection reads the versions of every probe it relays, once per connection, and its own when it is a Giant Grill Gauge. Versions stay unknown until a connection has read them. Home Assistant keeps the last versions read, including after a restart or with predictions turned off.
 
 ### SafeCook food safety
 
@@ -99,7 +117,8 @@ The script prints raw and decoded status notifications and saves them to a times
 
 ## Known limitations
 
-- Cooking targets and SafeCook programs must be set using the Combustion app or Display. This integration only reads them.
+- SafeCook programs must be set using the Combustion app or Display. This integration only reads them.
+- Only removal targets can be set. Removal-and-resting predictions set in the app are reported, but can't be set from Home Assistant.
 - Repeaters don't get entities of their own.
 - The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.
 - RSSI is only known for probes heard directly.

@@ -2,9 +2,10 @@
 
 from collections.abc import Generator
 from functools import partial
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from bleak.exc import BleakError
 from combustion_ble import MeatNet
 
 pytest_plugins = "pytest_homeassistant_custom_component"
@@ -13,6 +14,16 @@ pytest_plugins = "pytest_homeassistant_custom_component"
 @pytest.fixture(autouse=True)
 def mock_bluetooth(enable_bluetooth):
     """Auto mock bluetooth."""
+
+
+@pytest.fixture(autouse=True)
+def no_real_connections():
+    """Fail Bluetooth connections that a test hasn't faked, such as brief revision reads."""
+    with patch(
+        "custom_components.combustion.prediction.establish_connection",
+        AsyncMock(side_effect=BleakError("Tests make no real connections")),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)

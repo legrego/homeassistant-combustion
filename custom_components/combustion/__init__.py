@@ -19,13 +19,20 @@ from .const import CONF_ENABLE_PREDICTIONS, DOMAIN
 from .coordinator import CombustionConfigEntry, CombustionCoordinator
 from .entity import device_identifier
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SENSOR,
+]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: CombustionConfigEntry) -> bool:
     """Set up Combustion from a config entry."""
     coordinator = CombustionCoordinator(
-        hass, enable_predictions=entry.options.get(CONF_ENABLE_PREDICTIONS, False)
+        hass,
+        entry.entry_id,
+        enable_predictions=entry.options.get(CONF_ENABLE_PREDICTIONS, False),
     )
     entry.runtime_data = coordinator
 
@@ -40,7 +47,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: CombustionConfigEntry) 
     """Unload a config entry."""
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
-    await entry.runtime_data.async_stop_predictions()
+    await entry.runtime_data.async_stop_connections()
     return True
 
 

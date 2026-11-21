@@ -12,6 +12,16 @@
         }
     },
     "entity": {
+        "button": {
+            "prediction_cancel": {
+                "name": "Cancel cooking target"
+            }
+        },
+        "number": {
+            "prediction_target": {
+                "name": "Cooking target temperature"
+            }
+        },
         "sensor": {
             "core_temperature": {
                 "name": "Core temperature"
@@ -30,9 +40,6 @@
             },
             "rssi": {
                 "name": "RSSI"
-            },
-            "prediction_target": {
-                "name": "Cooking target temperature"
             },
             "prediction_remaining": {
                 "name": "Cooking time remaining"
@@ -111,10 +118,21 @@
             }
         }
     },
+    "exceptions": {
+        "not_connected": {
+            "message": "Cannot reach probe {probe}: it has no cooking prediction connection right now."
+        },
+        "command_rejected": {
+            "message": "Probe {probe} rejected the cooking target command."
+        },
+        "command_timeout": {
+            "message": "Probe {probe} did not acknowledge the cooking target command in time."
+        }
+    },
     "options": {
         "step": {
             "init": {
-                "description": "Read cooking predictions and SafeCook food safety over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Set your cooking target and SafeCook program in the Combustion app or Display.",
+                "description": "Read cooking predictions and SafeCook food safety over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Cooking targets can then be set and cancelled from Home Assistant. Choose SafeCook programs in the Combustion app or Display.",
                 "data": {
                     "enable_predictions": "Enable cooking predictions and SafeCook"
                 }

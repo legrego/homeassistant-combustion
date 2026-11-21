@@ -267,6 +267,7 @@ async def test_probe_becomes_unavailable_then_recovers(
         record.getMessage()
         for record in caplog.records
         if record.name.startswith("custom_components.combustion")
+        and "available" in record.getMessage()
     ]
     assert messages == [
         f"Probe(10001CCC) is unavailable: not heard directly or through MeatNet for {STALE_TIMEOUT} seconds",
