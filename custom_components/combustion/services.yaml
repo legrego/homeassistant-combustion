@@ -1,0 +1,35 @@
+configure_safecook:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: combustion
+              model: Predictive Thermometer
+    product:
+      required: true
+      selector:
+        select:
+          translation_key: safecook_product
+          options:
+            - simplified_any_poultry
+            - simplified_beef_cuts
+            - simplified_pork_cuts
+            - simplified_veal_cuts
+            - simplified_lamb_cuts
+            - simplified_ground_meats
+            - simplified_ham_fresh_or_smoked
+            - simplified_ham_cooked_and_reheated
+            - simplified_eggs
+            - simplified_fish_and_shellfish
+            - simplified_leftovers
+            - simplified_casseroles
+    serving:
+      default: served_immediately
+      selector:
+        select:
+          translation_key: safecook_serving
+          options:
+            - served_immediately
+            - cooked_and_chilled

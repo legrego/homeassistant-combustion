@@ -51,6 +51,9 @@ def node_status_frame(
 PROBE_FIRMWARE_REVISION = 0x46
 PROBE_HARDWARE_REVISION = 0x47
 SET_PREDICTION = 0x05
+CONFIGURE_FOOD_SAFE = 0x07
+RESET_FOOD_SAFE = 0x08
+COMMANDS = (SET_PREDICTION, CONFIGURE_FOOD_SAFE, RESET_FOOD_SAFE)
 
 
 def node_response_frame(
@@ -88,7 +91,7 @@ class Connections:
         self.disconnect_gate: asyncio.Event | None = None
         """When set, disconnects wait for this event, as a slow disconnect would."""
         self.commands_expected = False
-        """Whether the test sets targets. Otherwise any target set fails the test."""
+        """Whether the test sends commands. Otherwise any command fails the test."""
         self.command_success = True
         self.requests: list[tuple[str, int, int]] = []
         """Node requests written: address, message type, and probe serial number."""
@@ -126,7 +129,7 @@ class Connections:
             self.requests.append(
                 (device.address, message_type, int.from_bytes(serial, "little"))
             )
-            if message_type == SET_PREDICTION:
+            if message_type in COMMANDS:
                 response = node_response_frame(
                     message_type, request_id, b"", success=self.command_success
                 )
@@ -193,8 +196,8 @@ def connections():
     ):
         yield fake
     if not fake.commands_expected:
-        # Only revisions are requested; targets are never set unless asked.
-        assert all(request[1] != SET_PREDICTION for request in fake.requests)
+        # Only revisions are requested; commands are never sent unless asked.
+        assert all(request[1] not in COMMANDS for request in fake.requests)
 
 
 async def enable_predictions(hass: HomeAssistant):

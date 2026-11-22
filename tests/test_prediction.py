@@ -90,9 +90,9 @@ def food_safe_bytes(
     return data.to_bytes(10, "little") + status.to_bytes(8, "little")
 
 
-def probe_response_frame(*, success: bool = True) -> bytes:
-    """Build a probe's Set Prediction (0x05) UART response, per the probe spec."""
-    body = bytes([0x05, int(success), 0])
+def probe_response_frame(message_type: int = 0x05, *, success: bool = True) -> bytes:
+    """Build a probe's UART response with no payload, Set Prediction (0x05) by default."""
+    body = bytes([message_type, int(success), 0])
     return b"\xca\xfe" + crc16ccitt(body).to_bytes(2, "little") + body
 
 
@@ -100,7 +100,7 @@ def probe_response_frame(*, success: bool = True) -> bytes:
 def connection():
     """Capture status and disconnect callbacks without real Bluetooth I/O.
 
-    The probe acknowledges prediction commands with ``client.command_success``. Tests that send
+    The probe acknowledges every command with ``client.command_success``. Tests that send
     commands set ``client.commands_expected``; any other write fails the test.
     """
     client = Mock()
@@ -118,7 +118,9 @@ def connection():
             if call.args[0] == UART_TX_CHARACTERISTIC
         )
         asyncio.get_running_loop().call_soon(
-            uart, None, bytearray(probe_response_frame(success=client.command_success))
+            uart,
+            None,
+            bytearray(probe_response_frame(frame[4], success=client.command_success)),
         )
 
     client.write_gatt_char = AsyncMock(side_effect=write_gatt_char)

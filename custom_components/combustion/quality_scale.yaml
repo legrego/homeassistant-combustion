@@ -3,8 +3,8 @@
 rules:
   # Bronze
   action-setup:
-    status: exempt
-    comment: The integration registers no custom actions. Cooking targets use the standard number.set_value and button.press actions.
+    status: done
+    comment: async_setup registers combustion.configure_safecook, which validates its probe and reports when the integration isn't ready to reach it. Cooking targets use the standard number.set_value and button.press actions.
   appropriate-polling:
     status: exempt
     comment: Readings are pushed by Bluetooth advertisements and optional connected status notifications. The expiry timer only checks cached data, countdowns, and device availability. Firmware and hardware versions, which advertisements don't carry, are read once a day per online device, through an existing connection where possible.
@@ -24,15 +24,15 @@ rules:
     status: done
     comment: >-
       combustion_ble is Apache-2.0 licensed and published on PyPI.
-      The pinned 0.9.0 release includes host-managed prediction sessions for probes and
-      MeatNet repeaters, the connection planner the integration follows, and firmware and
-      hardware revision reads.
-      Source and license: https://github.com/legrego/combustion_ble/tree/v0.9.0.
-      Release: https://github.com/legrego/combustion_ble/releases/tag/v0.9.0.
-      Package: https://pypi.org/project/combustion-ble/0.9.0/.
+      The pinned 0.10.0 release includes host-managed prediction sessions for probes and
+      MeatNet repeaters, the connection planner the integration follows, firmware and
+      hardware revision reads, and SafeCook configuration.
+      Source and license: https://github.com/legrego/combustion_ble/tree/v0.10.0.
+      Release: https://github.com/legrego/combustion_ble/releases/tag/v0.10.0.
+      Package: https://pypi.org/project/combustion-ble/0.10.0/.
   docs-actions:
-    status: exempt
-    comment: The integration does not provide actions; README.md explains using its entities in standard automations.
+    status: done
+    comment: README.md documents combustion.configure_safecook and its fields, and explains using the entities in standard automations.
   docs-conditions:
     status: exempt
     comment: The integration does not provide custom conditions.
@@ -73,7 +73,7 @@ rules:
   # Silver
   action-exceptions:
     status: done
-    comment: Setting or cancelling a cooking target raises a translated HomeAssistantError when no connection reaches the probe, the probe or repeater rejects the command, or it times out.
+    comment: Cooking target and SafeCook commands raise a translated HomeAssistantError when no connection reaches the probe, the probe or repeater rejects the command, or it times out. The SafeCook action raises ServiceValidationError for devices that aren't probes, probes not heard yet, and predictions being disabled.
   config-entry-unloading:
     status: done
     comment: async_unload_entry unloads both platforms; unload callbacks remove Bluetooth, timer, and platform listeners. Tests cover unloading and reloading with existing and newly discovered devices.

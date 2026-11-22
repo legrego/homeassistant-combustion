@@ -11,7 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN, GAUGE_MODEL, MANUFACTURER, PROBE_MODEL
 
 if TYPE_CHECKING:
     from .coordinator import CombustionCoordinator
@@ -65,10 +65,10 @@ class CombustionEntity(Entity):
 
         identifier = device_identifier(device)
         if isinstance(device, Probe):
-            model = "Predictive Thermometer"
+            model = PROBE_MODEL
             serial_number = device.serial_number_string
         else:
-            model = "Giant Grill Gauge"
+            model = GAUGE_MODEL
             serial_number = device.serial_number
 
         self._attr_unique_id = f"{identifier}--{description.key}"

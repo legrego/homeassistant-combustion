@@ -1355,21 +1355,18 @@ development = ["black", "flake8", "mypy", "pytest", "types-colorama"]
 
 [[package]]
 name = "combustion-ble"
-version = "0.9.0"
+version = "0.10.0"
 description = "SDK for communicating with Combustion Bluetooth devices"
 optional = false
 python-versions = ">=3.14.2"
 groups = ["main"]
 files = [
-    {file = "combustion_ble-0.9.0-py3-none-any.whl", hash = "sha256:befe631ee3a70279d2a069532d62dec710b83a7e126e63e5c13e0b65bc8e9596"},
-    {file = "combustion_ble-0.9.0.tar.gz", hash = "sha256:cb0d53f3168d3415d3fd7544522dd30d14aaf989ee2ac18da914e6918341e650"},
+    {file = "combustion_ble-0.10.0-py3-none-any.whl", hash = "sha256:1566a070b1a924fa59d49053ea38a69f774795d92fbf4bb3e2bbf8a710c287f9"},
+    {file = "combustion_ble-0.10.0.tar.gz", hash = "sha256:7fe5b69e8aff05b8521b1f1902b7d528fdf929fbf3fe79266cf8c753f6b09d5b"},
 ]
 
 [package.dependencies]
 bleak = ">=3.0.2,<4"
-
-[package.extras]
-dev = ["Sphinx (==9.2.0)", "black (==26.10.1)", "build (==1.6.1)", "furo (==2025.12.19)", "isort (==9.0.2)", "mypy (==2.4.1)", "myst-parser (==5.2.0)", "packaging (==26.3)", "pytest (==9.2.0)", "pytest-cov (==7.1.0)", "pytest-sphinx (==0.7.1)", "rich (==15.0.0)", "ruff (==0.17.6)", "sphinx-autobuild (==2025.8.25)", "sphinx-autodoc-typehints (==3.17.6)", "sphinx-copybutton (==0.5.2)", "twine (==7.0.0)"]
 
 [[package]]
 name = "coverage"
@@ -5872,4 +5869,4 @@ ifaddr = ">=0.1.7"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.14.2,<3.15"
-content-hash = "5c5a60e868e50acc6758cb1e7637540ae0cf30e2f57c96d88998554fced7f037"
+content-hash = "aefd650ab84467539501c05bbee8f2ce91a83df9b45cd19b3c94773f377e7228"

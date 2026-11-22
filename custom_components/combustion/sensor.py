@@ -305,9 +305,11 @@ FOOD_SAFETY_SENSORS = (
     ),
     _temperature(
         "food_safety_threshold",
-        _food_safe_value(lambda food_safe: food_safe.threshold_temperature),
+        # Simplified programs written without a threshold, as Combustion's Android library and
+        # this integration's action do, leave the threshold to the firmware's product rules.
+        _food_safe_value(lambda food_safe: food_safe.threshold_temperature or None),
         translation_key="food_safety_threshold",
-        # Part of the program chosen in the app, not a measurement.
+        # Part of the program, not a measurement.
         state_class=None,
     ),
     CombustionSensorEntityDescription(
