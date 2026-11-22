@@ -1,5 +1,6 @@
 """Configuring, resetting, and turning off SafeCook from Home Assistant."""
 
+import asyncio
 from time import monotonic
 
 import pytest
@@ -21,6 +22,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.combustion.const import DOMAIN, MEATNET_UNIQUE_ID
+from custom_components.combustion.coordinator import PENDING_FOOD_SAFE_TIMEOUT
 from custom_components.combustion.prediction import RepeaterMonitor
 from tests.test_cooking_target import connect_direct, entity_id, settle
 from tests.test_init import GAUGE, PROBE, get_state, setup_entry
@@ -419,3 +421,94 @@ async def test_legacy_sensors_are_removed(hass: HomeAssistant):
     await hass.async_block_till_done()
     for unique_id in (PRODUCT, SERVING):
         assert not registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+
+
+async def test_consecutive_selects_before_status(hass: HomeAssistant, connection):  # noqa: F811
+    """A change made before the probe reports the previous one builds on the previous one."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    await select(hass, PRODUCT, "simplified_any_poultry")
+    # The probe still reports pork until its next status.
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.ANY_POULTRY
+    assert program.serving is Serving.COOKED_AND_CHILLED
+    await select(hass, PRODUCT, "simplified_eggs")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.EGGS
+    assert program.serving is Serving.COOKED_AND_CHILLED
+
+    # A status from before the writes doesn't replace them.
+    notify(client, food_safe=simplified(product=1, serving=0))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "served_immediately")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.EGGS
+
+    # Turning SafeCook off counts too: there's no program left to change the serving of.
+    await press(hass, OFF)
+    with pytest.raises(ServiceValidationError) as err:
+        await select(hass, SERVING, "cooked_and_chilled")
+    assert err.value.translation_key == "food_safety_no_program"
+
+    # Once the probe reports SafeCook off, a program started in Combustion's app shows through.
+    notify(client, food_safe=bytes(18))
+    await hass.async_block_till_done()
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.PORK_CUTS
+
+
+async def test_concurrent_selects(hass: HomeAssistant, connection):  # noqa: F811
+    """Changes made at the same time are written one after another, each building on the last."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    await asyncio.gather(
+        select(hass, PRODUCT, "simplified_any_poultry"),
+        select(hass, SERVING, "cooked_and_chilled"),
+    )
+    programs = [
+        FoodSafeData.from_bytes(call.args[1][6:16])
+        for call in client.write_gatt_char.call_args_list[-2:]
+    ]
+    assert [(p.product, p.serving) for p in programs] == [
+        (SimplifiedProduct.ANY_POULTRY, Serving.SERVED_IMMEDIATELY),
+        (SimplifiedProduct.ANY_POULTRY, Serving.COOKED_AND_CHILLED),
+    ]
+
+
+async def test_reported_program_takes_over(
+    hass: HomeAssistant,
+    connection,  # noqa: F811
+    freezer,
+):
+    """Once the probe reports a written program, or stops confirming it, status is followed again."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    # Confirmed by status, then changed in Combustion's app.
+    await select(hass, PRODUCT, "simplified_any_poultry")
+    notify(client, food_safe=simplified(product=1))
+    await hass.async_block_till_done()
+    notify(client, food_safe=simplified(product=2))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct(2)
+
+    # Never confirmed: after a while, the probe's status wins.
+    await select(hass, PRODUCT, "simplified_eggs")
+    freezer.tick(PENDING_FOOD_SAFE_TIMEOUT)
+    await select(hass, SERVING, "served_immediately")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct(2)

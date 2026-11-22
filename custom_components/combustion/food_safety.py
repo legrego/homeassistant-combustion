@@ -67,24 +67,30 @@ SETTABLE_PRODUCTS = {
 """Products whose programs can be written from Home Assistant, by option."""
 
 
-def _product(food_safe: FoodSafe) -> str | None:
-    product = food_safe.product
+type Program = FoodSafe | FoodSafeProgram
+"""A program reported by a probe, or one written to it."""
+
+
+def product_option(program: Program) -> str | None:
+    """Return the program's product as an option, if this integration knows it."""
+    product = program.product
     # Unknown products are kept as plain integers.
     if isinstance(product, SimplifiedProduct | IntegratedProduct):
         return _product_option(product)
     return None
 
 
-def _serving(food_safe: FoodSafe) -> str | None:
-    if isinstance(food_safe.serving, Serving):
-        return food_safe.serving.name.lower()
+def serving_option(program: Program) -> str | None:
+    """Return the program's serving as an option, if this integration knows it."""
+    if isinstance(program.serving, Serving):
+        return program.serving.name.lower()
     return None
 
 
-current_product = food_safe_value(_product)
+current_product = food_safe_value(product_option)
 """The probe's product option, unknown while SafeCook is off."""
 
-current_serving = food_safe_value(_serving)
+current_serving = food_safe_value(serving_option)
 """The probe's serving option, unknown while SafeCook is off."""
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from combustion_ble import Device, Probe, Serving
+from combustion_ble import Device, FoodSafeProgram, Probe, Serving
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.core import HomeAssistant, callback
@@ -16,8 +16,11 @@ from .food_safety import (
     PRODUCTS,
     SERVINGS,
     SETTABLE_PRODUCTS,
+    Program,
     current_product,
     current_serving,
+    product_option,
+    serving_option,
     simplified_program,
 )
 
@@ -88,12 +91,14 @@ class CombustionProductSelect(CombustionProbeControl, SelectEntity):
                 translation_domain=DOMAIN,
                 translation_key="food_safety_product_unsupported",
             )
-        serving = SERVINGS.get(
-            current_serving(self._device) or "", Serving.SERVED_IMMEDIATELY
-        )
-        await self._coordinator.async_configure_food_safe(
-            self._device, simplified_program(product, serving)
-        )
+
+        def change(current: Program | None) -> FoodSafeProgram:
+            serving = None if current is None else serving_option(current)
+            return simplified_program(
+                product, SERVINGS.get(serving or "", Serving.SERVED_IMMEDIATELY)
+            )
+
+        await self._coordinator.async_change_food_safe(self._device, change)
 
 
 class CombustionServingSelect(CombustionProbeControl, SelectEntity):
@@ -113,19 +118,20 @@ class CombustionServingSelect(CombustionProbeControl, SelectEntity):
 
         This replaces the program and restarts its progress.
         """
-        food_safe = self._device.food_safe
-        if food_safe is None or not food_safe.program_set:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="food_safety_no_program",
-            )
-        # Only Simplified products are settable, so this also rules out Integrated programs.
-        product = SETTABLE_PRODUCTS.get(current_product(self._device) or "")
-        if product is None:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="food_safety_serving_unsupported",
-            )
-        await self._coordinator.async_configure_food_safe(
-            self._device, simplified_program(product, SERVINGS[option])
-        )
+
+        def change(current: Program | None) -> FoodSafeProgram:
+            if current is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="food_safety_no_program",
+                )
+            # Only Simplified products are settable, so this also rules out Integrated programs.
+            product = SETTABLE_PRODUCTS.get(product_option(current) or "")
+            if product is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="food_safety_serving_unsupported",
+                )
+            return simplified_program(product, SERVINGS[option])
+
+        await self._coordinator.async_change_food_safe(self._device, change)

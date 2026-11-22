@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from time import monotonic
 
 from bleak_retry_connector import BLEAK_RETRY_EXCEPTIONS
 from combustion_ble import (
     COMBUSTION_MANUFACTURER_ID,
     ConnectionPlan,
     Device,
+    FoodSafe,
     FoodSafeProgram,
     Gauge,
     MeatNet,
@@ -31,10 +34,17 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, LOGGER, STALE_TIMEOUT
 from .entity import device_identifier
+from .food_safety import Program, product_option, serving_option
 from .prediction import NodeCommand, PredictionMonitor, ProbeCommand, RepeaterMonitor
 from .revisions import RevisionScheduler
 
 EXPIRE_INTERVAL = timedelta(seconds=1)
+
+PENDING_FOOD_SAFE_TIMEOUT = 10
+"""Seconds a written SafeCook program stands in for the probe's status until the probe reports it.
+
+Probes report status about once a second; this also covers a repeater relaying it late.
+"""
 
 type CombustionConfigEntry = ConfigEntry[CombustionCoordinator]
 
@@ -73,6 +83,9 @@ class CombustionCoordinator:
         self._retiring_tasks: dict[int, asyncio.Task] = {}
         self._handled_times: dict[str, float] = {}
         self._connection_listeners: list[CALLBACK_TYPE] = []
+        # SafeCook programs written but not yet reported, by probe serial number.
+        self._pending_food_safe: dict[int, _PendingProgram] = {}
+        self._food_safe_locks: dict[int, asyncio.Lock] = {}
         self.meatnet.add_device_listener(self._async_log_availability)
         self.meatnet.add_device_listener(self._async_track_revisions)
 
@@ -349,27 +362,77 @@ class CombustionCoordinator:
             probe, direct, relayed, "command_rejected", "command_timeout"
         )
 
+    @callback
+    def food_safe_program(self, probe: Probe) -> Program | None:
+        """Return a probe's SafeCook program, or ``None`` while it is off or not reported yet.
+
+        A program written from Home Assistant stands in for the probe's status until the probe
+        reports it, so a change made before then builds on it rather than on the old program.
+        """
+        if (pending := self._pending_food_safe.get(probe.serial_number)) is not None:
+            if not pending.expired:
+                return pending.program
+            self._async_drop_pending(probe.serial_number)
+        reported = probe.food_safe
+        return reported if reported is not None and reported.program_set else None
+
+    @callback
+    def _async_track_pending(
+        self, probe: Probe, program: FoodSafeProgram | None
+    ) -> None:
+        """Hold a written program until the probe reports it, or for a while if it never does."""
+        serial_number = probe.serial_number
+        self._async_drop_pending(serial_number)
+
+        @callback
+        def _async_on_change() -> None:
+            if pending.expired or _reports(probe.food_safe, program):
+                self._async_drop_pending(serial_number)
+
+        pending = _PendingProgram(
+            program, monotonic(), probe.add_listener(_async_on_change)
+        )
+        self._pending_food_safe[serial_number] = pending
+
+    @callback
+    def _async_drop_pending(self, serial_number: int) -> None:
+        if (pending := self._pending_food_safe.pop(serial_number, None)) is not None:
+            pending.remove_listener()
+
+    async def async_change_food_safe(
+        self, probe: Probe, change: Callable[[Program | None], FoodSafeProgram | None]
+    ) -> None:
+        """Write the program ``change`` makes from the probe's current one.
+
+        Changes to a probe are written one at a time, each seeing the program the last one
+        wrote. ``change`` returns ``None`` to turn SafeCook off, and can raise to write nothing.
+        Returns once the probe acknowledges the command. Its status reports the new program.
+        """
+        serial_number = probe.serial_number
+        lock = self._food_safe_locks.setdefault(serial_number, asyncio.Lock())
+        async with lock:
+            program = change(self.food_safe_program(probe))
+            if program is None:
+                direct: ProbeCommand = ProbeSession.clear_food_safe
+                relayed: NodeCommand = NodeSession.clear_food_safe
+            else:
+
+                async def direct(session: ProbeSession) -> None:
+                    await session.configure_food_safe(program)
+
+                async def relayed(session: NodeSession, serial_number: int) -> None:
+                    await session.configure_food_safe(serial_number, program)
+
+            await self._async_command(
+                probe, direct, relayed, "food_safety_rejected", "food_safety_timeout"
+            )
+            self._async_track_pending(probe, program)
+
     async def async_configure_food_safe(
         self, probe: Probe, program: FoodSafeProgram | None
     ) -> None:
-        """Write a probe's SafeCook program, or turn SafeCook off with ``None``.
-
-        Returns once the probe acknowledges the command. Its status reports the new program.
-        """
-        if program is None:
-            direct: ProbeCommand = ProbeSession.clear_food_safe
-            relayed: NodeCommand = NodeSession.clear_food_safe
-        else:
-
-            async def direct(session: ProbeSession) -> None:
-                await session.configure_food_safe(program)
-
-            async def relayed(session: NodeSession, serial_number: int) -> None:
-                await session.configure_food_safe(serial_number, program)
-
-        await self._async_command(
-            probe, direct, relayed, "food_safety_rejected", "food_safety_timeout"
-        )
+        """Write a probe's SafeCook program, or turn SafeCook off with ``None``."""
+        await self.async_change_food_safe(probe, lambda _current: program)
 
     async def async_reset_food_safe(self, probe: Probe) -> None:
         """Reset a probe's SafeCook progress, keeping its program."""
@@ -450,3 +513,30 @@ class CombustionCoordinator:
         for serial_number, monitor in list(self._retiring.items()):
             if await monitor.async_stop():
                 self._retiring.pop(serial_number)
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingProgram:
+    """A SafeCook program written to a probe that its status hasn't reported yet."""
+
+    program: FoodSafeProgram | None
+    """``None`` is SafeCook turned off."""
+    written_at: float
+    remove_listener: Callable[[], None]
+
+    @property
+    def expired(self) -> bool:
+        return monotonic() - self.written_at >= PENDING_FOOD_SAFE_TIMEOUT
+
+
+def _reports(reported: FoodSafe | None, program: FoodSafeProgram | None) -> bool:
+    """Whether a probe's status reports a program written to it."""
+    if reported is None:
+        return False
+    if program is None:
+        return not reported.program_set
+    # Options name the mode along with the product.
+    return reported.program_set and (
+        product_option(reported),
+        serving_option(reported),
+    ) == (product_option(program), serving_option(program))
