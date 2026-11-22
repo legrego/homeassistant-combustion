@@ -4,10 +4,10 @@ rules:
   # Bronze
   action-setup:
     status: exempt
-    comment: The integration does not register actions.
+    comment: The integration registers no custom actions. Cooking targets use the standard number.set_value and button.press actions.
   appropriate-polling:
     status: exempt
-    comment: Readings are pushed by Bluetooth advertisements and optional connected status notifications. The expiry timer only checks cached data, countdowns, and device availability.
+    comment: Readings are pushed by Bluetooth advertisements and optional connected status notifications. The expiry timer only checks cached data, countdowns, and device availability. Firmware and hardware versions, which advertisements don't carry, are read once a day per online device, through an existing connection where possible.
   brands:
     status: done
     comment: Icons and logos are in brand/ and https://github.com/home-assistant/brands/tree/master/custom_integrations/combustion.
@@ -16,7 +16,7 @@ rules:
     comment: Shared Bluetooth handling is in coordinator.py and the base entity is in entity.py.
   config-flow:
     status: done
-    comment: Manual setup and Bluetooth discovery share a confirmation flow. An options flow enables read-only prediction connections.
+    comment: Manual setup and Bluetooth discovery share a confirmation flow. An options flow enables prediction connections, which also set and cancel cooking targets.
   config-flow-test-coverage:
     status: done
     comment: Tests cover setup, discovery, invalid advertisements, and duplicate entries. CI requires 100% line and branch coverage of config_flow.py.
@@ -24,11 +24,12 @@ rules:
     status: done
     comment: >-
       combustion_ble is Apache-2.0 licensed and published on PyPI.
-      The pinned 0.6.0 release includes host-managed prediction sessions for probes and
-      MeatNet repeaters, and the connection planner the integration follows.
-      Source and license: https://github.com/legrego/combustion_ble/tree/v0.6.0.
-      Release: https://github.com/legrego/combustion_ble/releases/tag/v0.6.0.
-      Package: https://pypi.org/project/combustion-ble/0.6.0/.
+      The pinned 0.9.0 release includes host-managed prediction sessions for probes and
+      MeatNet repeaters, the connection planner the integration follows, and firmware and
+      hardware revision reads.
+      Source and license: https://github.com/legrego/combustion_ble/tree/v0.9.0.
+      Release: https://github.com/legrego/combustion_ble/releases/tag/v0.9.0.
+      Package: https://pypi.org/project/combustion-ble/0.9.0/.
   docs-actions:
     status: exempt
     comment: The integration does not provide actions; README.md explains using its entities in standard automations.
@@ -71,8 +72,8 @@ rules:
 
   # Silver
   action-exceptions:
-    status: exempt
-    comment: The integration registers no actions and only provides read-only sensor and binary_sensor platforms.
+    status: done
+    comment: Setting or cancelling a cooking target raises a translated HomeAssistantError when no connection reaches the probe, the probe or repeater rejects the command, or it times out.
   config-entry-unloading:
     status: done
     comment: async_unload_entry unloads both platforms; unload callbacks remove Bluetooth, timer, and platform listeners. Tests cover unloading and reloading with existing and newly discovered devices.
@@ -93,7 +94,7 @@ rules:
     comment: The coordinator logs at info level once per availability transition. Tests verify one unavailable message and one recovery message despite repeated updates.
   parallel-updates:
     status: done
-    comment: Both read-only platforms set PARALLEL_UPDATES to 0; entities only update from pushed advertisements.
+    comment: Every platform sets PARALLEL_UPDATES to 0. Read-only entities only update from pushed data; the library matches each command to its response, so commands for several probes can run at once.
   reauthentication-flow:
     status: exempt
     comment: Passive Bluetooth advertisements require no authentication or credentials.
@@ -119,7 +120,7 @@ rules:
   entity-device-class: todo
   entity-disabled-by-default: todo
   entity-translations: todo
-  exception-translations: todo
+  exception-translations: done
   icon-translations: todo
   reconfiguration-flow: todo
   repair-issues: todo

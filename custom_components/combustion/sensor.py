@@ -13,7 +13,6 @@ from combustion_ble import (
     FoodSafeState,
     Gauge,
     IntegratedProduct,
-    PredictionMode,
     PredictionState,
     Probe,
     Serving,
@@ -35,12 +34,11 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from .coordinator import CombustionConfigEntry
-from .entity import CombustionEntity
+from .entity import CombustionEntity, async_remove_entities, prediction_active
 
 # Entities only update from pushed advertisements.
 PARALLEL_UPDATES = 0
@@ -150,8 +148,11 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add sensors for each probe and gauge as it is discovered."""
+    # The cooking target became a number entity, which can also set it.
+    removed = {"prediction_target"}
     if not entry.runtime_data.enable_predictions:
-        _async_remove_prediction_entities(hass, entry)
+        removed.update(description.key for description in CONNECTED_SENSORS)
+    async_remove_entities(hass, entry.entry_id, SENSOR_DOMAIN, removed)
 
     @callback
     def _async_add_device(device: Device) -> None:
@@ -172,18 +173,6 @@ async def async_setup_entry(
     )
 
 
-@callback
-def _async_remove_prediction_entities(
-    hass: HomeAssistant, entry: CombustionConfigEntry
-) -> None:
-    """Remove prediction and SafeCook sensors left in the registry after they are disabled."""
-    registry = er.async_get(hass)
-    suffixes = tuple(f"--{description.key}" for description in CONNECTED_SENSORS)
-    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if entity.domain == SENSOR_DOMAIN and entity.unique_id.endswith(suffixes):
-            registry.async_remove(entity.entity_id)
-
-
 class CombustionSensor(CombustionEntity, SensorEntity):
     """A Combustion sensor."""
 
@@ -202,14 +191,6 @@ class CombustionSensor(CombustionEntity, SensorEntity):
         return {"thermistor_id": thermistor_fn(self._device)}
 
 
-def _prediction_active(probe: Probe) -> bool:
-    """Whether the probe has a supported cooking target."""
-    return probe.prediction is not None and probe.prediction.mode in (
-        PredictionMode.TIME_TO_REMOVAL,
-        PredictionMode.REMOVAL_AND_RESTING,
-    )
-
-
 PREDICTION_STATES = {
     PredictionState.PROBE_NOT_INSERTED: "probe_not_inserted",
     PredictionState.PROBE_INSERTED: "probe_inserted",
@@ -219,17 +200,7 @@ PREDICTION_STATES = {
 }
 
 PREDICTION_SENSORS = (
-    _temperature(
-        "prediction_target",
-        lambda probe: (
-            probe.prediction.set_point_temperature
-            if _prediction_active(probe)
-            else None
-        ),
-        translation_key="prediction_target",
-        # A target chosen in the app, not a measurement, so it has no long-term statistics.
-        state_class=None,
-    ),
+    # The cooking target is a number entity.
     CombustionSensorEntityDescription(
         key="prediction_remaining",
         translation_key="prediction_remaining",
@@ -248,7 +219,7 @@ PREDICTION_SENSORS = (
         value_fn=lambda probe: (
             (
                 PREDICTION_STATES.get(probe.prediction.state)
-                if _prediction_active(probe)
+                if prediction_active(probe)
                 else "idle"
             )
             if probe.prediction is not None

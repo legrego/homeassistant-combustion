@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
+from combustion_ble.const import FW_VERSION_CHARACTERISTIC, HW_VERSION_CHARACTERISTIC
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_get_advertisement_callback,
@@ -131,3 +132,22 @@ def inject_bt_advertisement(
 ) -> None:
     """Deliver an advertisement through Home Assistant's Bluetooth manager."""
     async_get_advertisement_callback(hass)(info)
+
+
+PROBE_FIRMWARE = "v2.4.0"
+PROBE_HARDWARE = "v1.1-A1"
+NODE_FIRMWARE = "v2.6.0"
+NODE_HARDWARE = "v3.1"
+
+
+def device_information(firmware: str, hardware: str):
+    """Stand in for a client's read_gatt_char on the Device Information service."""
+    values = {
+        FW_VERSION_CHARACTERISTIC: firmware.encode(),
+        HW_VERSION_CHARACTERISTIC: hardware.encode() + b"\x00\x00",
+    }
+
+    async def read_gatt_char(characteristic: str) -> bytes:
+        return values[characteristic]
+
+    return read_gatt_char

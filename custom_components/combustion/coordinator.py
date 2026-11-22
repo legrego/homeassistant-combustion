@@ -6,11 +6,14 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from bleak_retry_connector import BLEAK_RETRY_EXCEPTIONS
 from combustion_ble import (
     COMBUSTION_MANUFACTURER_ID,
     ConnectionPlan,
     Device,
+    Gauge,
     MeatNet,
+    PredictionCommandRejectedError,
     Probe,
     ProbeAdvertisement,
     parse_advertisement,
@@ -19,10 +22,14 @@ from combustion_ble import (
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import LOGGER, STALE_TIMEOUT
+from .const import DOMAIN, LOGGER, STALE_TIMEOUT
+from .entity import device_identifier
 from .prediction import PredictionMonitor, RepeaterMonitor
+from .revisions import RevisionScheduler
 
 EXPIRE_INTERVAL = timedelta(seconds=1)
 
@@ -39,10 +46,15 @@ class CombustionCoordinator:
     """
 
     def __init__(
-        self, hass: HomeAssistant, *, enable_predictions: bool = False
+        self,
+        hass: HomeAssistant,
+        config_entry_id: str,
+        *,
+        enable_predictions: bool = False,
     ) -> None:
         """Initialize."""
         self.hass = hass
+        self.config_entry_id = config_entry_id
         self.enable_predictions = enable_predictions
         self.predictions: dict[int, PredictionMonitor] = {}
         """Direct probe connections, by probe serial number."""
@@ -51,12 +63,15 @@ class CombustionCoordinator:
         self.repeater = (
             RepeaterMonitor(hass, self.meatnet) if enable_predictions else None
         )
+        self.revisions = RevisionScheduler(hass, self.meatnet)
         # Direct connections being released because the repeater reports their probes. A probe
         # gets no new direct connection until its old session has let go of the probe.
         self._retiring: dict[int, PredictionMonitor] = {}
         self._retiring_tasks: dict[int, asyncio.Task] = {}
         self._handled_times: dict[str, float] = {}
+        self._connection_listeners: list[CALLBACK_TYPE] = []
         self.meatnet.add_device_listener(self._async_log_availability)
+        self.meatnet.add_device_listener(self._async_track_revisions)
 
     @callback
     def async_start(self) -> CALLBACK_TYPE:
@@ -119,6 +134,50 @@ class CombustionCoordinator:
         device.add_listener(_async_on_change)
 
     @callback
+    def _async_track_revisions(self, device: Device) -> None:
+        """Copy firmware and hardware revisions to the device registry once they are read.
+
+        Revisions are only read through prediction connections. The registry keeps the last ones
+        read, so they still show after a restart or with predictions turned off.
+        """
+        if not isinstance(device, Probe | Gauge):
+            return
+        identifier = (DOMAIN, device_identifier(device))
+        recorded: tuple[str | None, str | None] = (None, None)
+
+        @callback
+        def _async_on_change() -> None:
+            # Listeners run for every advertisement; revisions change rarely.
+            nonlocal recorded
+            firmware = device.firmware_version
+            revisions = (
+                None if firmware is None else firmware.raw,
+                device.hardware_revision,
+            )
+            if revisions == recorded:
+                return
+            registry = dr.async_get(self.hass)
+            entry = registry.async_get_device_by_identifier(
+                identifier, self.config_entry_id
+            )
+            if entry is None:
+                return
+            recorded = revisions
+            changes: dict[str, str] = {}
+            if (firmware := device.firmware_version) is not None and (
+                str(firmware) != entry.sw_version
+            ):
+                changes["sw_version"] = str(firmware)
+            if (hardware := device.hardware_revision) is not None and (
+                hardware != entry.hw_version
+            ):
+                changes["hw_version"] = hardware
+            if changes:
+                registry.async_update_device(entry.id, **changes)
+
+        device.add_listener(_async_on_change)
+
+    @callback
     def _async_handle_service_info(
         self,
         service_info: bluetooth.BluetoothServiceInfoBleak,
@@ -159,8 +218,25 @@ class CombustionCoordinator:
                 self._async_handle_service_info(service_info)
 
         self.meatnet.expire()
-        if self.repeater is not None and not self._predictions_stopped:
+        if self._predictions_stopped:
+            return
+        plan = None
+        if self.repeater is not None:
             self._async_manage_connections(self.repeater)
+            # Connections start and end without any change to the probes, so controls that
+            # depend on a connection check it each tick.
+            for listener in list(self._connection_listeners):
+                listener()
+            plan = self._plan()
+        self.revisions.async_tick(
+            repeater=self.repeater, direct=self.predictions, plan=plan
+        )
+
+    @callback
+    def async_add_connection_listener(self, listener: CALLBACK_TYPE) -> CALLBACK_TYPE:
+        """Call ``listener`` every tick while predictions run, to follow connections."""
+        self._connection_listeners.append(listener)
+        return lambda: self._connection_listeners.remove(listener)
 
     def _plan(self) -> ConnectionPlan:
         """Ask the library which prediction connections to hold."""
@@ -176,7 +252,14 @@ class CombustionCoordinator:
         """Keep a repeater connected, and release direct connections it makes redundant."""
         plan = self._plan()
         if repeater.can_connect:
+            # A brief revision connection gives way to predictions. Its device can't take a
+            # second session, so it is passed over until the brief connection releases it.
+            held = self.revisions.held_address
+            if held in plan.repeaters:
+                self.revisions.async_cancel_brief()
             for address in plan.repeaters:
+                if address == held:
+                    continue
                 if address in repeater.failed_addresses:
                     # All untried candidates were unreachable. Start a fresh round so failed
                     # repeaters can recover without starving lower-ranked candidates.
@@ -220,6 +303,63 @@ class CombustionCoordinator:
         )
 
     @callback
+    def can_command(self, probe: Probe) -> bool:
+        """Whether a running connection can set or cancel the probe's cooking target."""
+        return self._command_route(probe) is not None
+
+    @callback
+    def _command_route(
+        self, probe: Probe
+    ) -> RepeaterMonitor | PredictionMonitor | None:
+        """Pick the connection for a probe's commands: the one supplying its predictions."""
+        serial_number = probe.serial_number
+        repeater = self.repeater
+        if (
+            repeater is not None
+            and repeater.session is not None
+            and serial_number in self._plan().release
+        ):
+            return repeater
+        monitor = self.predictions.get(serial_number)
+        if monitor is not None and monitor.session is not None:
+            return monitor
+        return None
+
+    async def async_set_prediction(self, probe: Probe, celsius: float | None) -> None:
+        """Set a probe's removal target in Celsius, or cancel it with ``None``.
+
+        Returns once the probe acknowledges the command. Its predictions report the new target
+        with their next status update.
+        """
+        route = self._command_route(probe)
+        placeholders = {"probe": probe.serial_number_string}
+        try:
+            if isinstance(route, RepeaterMonitor):
+                await route.async_set_prediction(probe.serial_number, celsius)
+            elif route is not None:
+                await route.async_set_prediction(celsius)
+            else:
+                raise ConnectionError("No prediction connection")
+        except PredictionCommandRejectedError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_rejected",
+                translation_placeholders=placeholders,
+            ) from err
+        except TimeoutError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_timeout",
+                translation_placeholders=placeholders,
+            ) from err
+        except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="not_connected",
+                translation_placeholders=placeholders,
+            ) from err
+
+    @callback
     def prediction_for(self, probe: Probe) -> PredictionMonitor:
         """Get a probe's prediction monitor."""
         if probe.serial_number not in self.predictions:
@@ -228,14 +368,15 @@ class CombustionCoordinator:
             )
         return self.predictions[probe.serial_number]
 
-    async def async_stop_predictions(self) -> None:
-        """Release all prediction connections during unload.
+    async def async_stop_connections(self) -> None:
+        """Release all prediction and revision connections during unload.
 
         Advertisements keep arriving until the entry's unload callbacks stop listening, which
         happens after this returns. Stop starting monitors first, so none is created or connects
         while existing ones are being stopped.
         """
         self._predictions_stopped = True
+        await self.revisions.async_stop()
         # Stopped in turn, in this task, so a connection that has not started yet is cancelled
         # before it can connect.
         for monitor in list(self.predictions.values()):

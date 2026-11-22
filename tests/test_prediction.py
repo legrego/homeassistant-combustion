@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from bleak.exc import BleakError
 from combustion_ble import MeatNet
+from combustion_ble.const import UART_RX_CHARACTERISTIC, UART_TX_CHARACTERISTIC
+from combustion_ble.utilities.crc16ccitt import crc16ccitt
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -18,6 +20,9 @@ from tests.test_init import PROBE, get_state, setup_entry
 from tests.utils.bt_utils import (
     NODE_ADDRESS,
     PROBE_ADDRESS,
+    PROBE_FIRMWARE,
+    PROBE_HARDWARE,
+    device_information,
     inject_bt_advertisement,
     probe_payload,
     service_info,
@@ -85,14 +90,41 @@ def food_safe_bytes(
     return data.to_bytes(10, "little") + status.to_bytes(8, "little")
 
 
+def probe_response_frame(*, success: bool = True) -> bytes:
+    """Build a probe's Set Prediction (0x05) UART response, per the probe spec."""
+    body = bytes([0x05, int(success), 0])
+    return b"\xca\xfe" + crc16ccitt(body).to_bytes(2, "little") + body
+
+
 @pytest.fixture
 def connection():
-    """Capture status and disconnect callbacks without real Bluetooth I/O."""
+    """Capture status and disconnect callbacks without real Bluetooth I/O.
+
+    The probe acknowledges prediction commands with ``client.command_success``. Tests that send
+    commands set ``client.commands_expected``; any other write fails the test.
+    """
     client = Mock()
     client.start_notify = AsyncMock()
     client.is_connected = True
     client.stop_notify = AsyncMock()
-    client.write_gatt_char = AsyncMock()
+    client.commands_expected = False
+    client.command_success = True
+
+    async def write_gatt_char(characteristic, frame, response):
+        assert characteristic == UART_RX_CHARACTERISTIC
+        uart = next(
+            call.args[1]
+            for call in client.start_notify.call_args_list
+            if call.args[0] == UART_TX_CHARACTERISTIC
+        )
+        asyncio.get_running_loop().call_soon(
+            uart, None, bytearray(probe_response_frame(success=client.command_success))
+        )
+
+    client.write_gatt_char = AsyncMock(side_effect=write_gatt_char)
+    client.read_gatt_char = AsyncMock(
+        side_effect=device_information(PROBE_FIRMWARE, PROBE_HARDWARE)
+    )
 
     async def disconnect():
         client.is_connected = False
@@ -114,7 +146,8 @@ def connection():
         ),
     ):
         yield client, establish
-        client.write_gatt_char.assert_not_called()
+        if not client.commands_expected:
+            client.write_gatt_char.assert_not_called()
 
 
 def notify(client, **kwargs):
@@ -153,10 +186,7 @@ async def test_prediction_entities(hass: HomeAssistant, connection, clock):
     )
     notify(client)
     await hass.async_block_till_done()
-    target = get_state(hass, "sensor", f"{PROBE}--prediction_target")
-    assert target.state == "65.0"
-    # A set point is not a measurement, so it records no long-term statistics.
-    assert "state_class" not in target.attributes
+    assert get_state(hass, "number", f"{PROBE}--prediction_target").state == "65.0"
     assert (
         get_state(hass, "sensor", f"{PROBE}--prediction_status").state == "predicting"
     )
@@ -318,18 +348,25 @@ async def test_disable_predictions_releases_connection(hass, connection):
     await hass.async_block_till_done()
     notify(client)
     registry = er.async_get(hass)
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--prediction_target")
+    assert registry.async_get_entity_id("number", DOMAIN, f"{PROBE}--prediction_target")
+    assert registry.async_get_entity_id("button", DOMAIN, f"{PROBE}--prediction_cancel")
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--food_safety")
     hass.config_entries.async_update_entry(
         entry, options={CONF_ENABLE_PREDICTIONS: False}
     )
     await hass.async_block_till_done()
     client.disconnect.assert_awaited_once()
-    # Prediction and SafeCook sensors are removed rather than left behind as orphaned entities.
+    # Prediction and SafeCook entities are removed rather than left behind as orphaned entities.
     for description in CONNECTED_SENSORS:
         assert not registry.async_get_entity_id(
             "sensor", DOMAIN, f"{PROBE}--{description.key}"
         )
+    assert not registry.async_get_entity_id(
+        "number", DOMAIN, f"{PROBE}--prediction_target"
+    )
+    assert not registry.async_get_entity_id(
+        "button", DOMAIN, f"{PROBE}--prediction_cancel"
+    )
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{PROBE}--sensor--core")
     inject_bt_advertisement(hass, service_info(probe_payload(low_battery=True)))
     await hass.async_block_till_done()
@@ -374,7 +411,7 @@ async def test_real_probe_prediction_packet(hass, connection, clock):
     )
     client.start_notify.call_args.args[1](None, bytearray(packet))
     await hass.async_block_till_done()
-    assert get_state(hass, "sensor", f"{PROBE}--prediction_target").state == "37.7"
+    assert get_state(hass, "number", f"{PROBE}--prediction_target").state == "37.7"
     assert (
         get_state(hass, "sensor", f"{PROBE}--prediction_status").state == "predicting"
     )

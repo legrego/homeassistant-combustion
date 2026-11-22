@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
-from combustion_ble.const import UART_TX_CHARACTERISTIC
+from combustion_ble.const import UART_RX_CHARACTERISTIC, UART_TX_CHARACTERISTIC
 from combustion_ble.utilities.crc16ccitt import crc16ccitt
 from homeassistant.const import STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
@@ -17,8 +17,13 @@ from tests.test_init import PROBE, get_state, setup_entry
 from tests.test_prediction import status_packet
 from tests.utils.bt_utils import (
     NODE_ADDRESS,
+    NODE_FIRMWARE,
+    NODE_HARDWARE,
     PROBE_ADDRESS,
+    PROBE_FIRMWARE,
+    PROBE_HARDWARE,
     PROBE_SERIAL,
+    device_information,
     inject_bt_advertisement,
     probe_payload,
     service_info,
@@ -43,8 +48,31 @@ def node_status_frame(
     return b"\xca\xfe" + crc16ccitt(body).to_bytes(2, "little") + body
 
 
+PROBE_FIRMWARE_REVISION = 0x46
+PROBE_HARDWARE_REVISION = 0x47
+SET_PREDICTION = 0x05
+
+
+def node_response_frame(
+    message_type: int, request_id: bytes, payload: bytes, *, success: bool = True
+) -> bytes:
+    """Build a repeater's UART response, per the MeatNet node spec."""
+    body = (
+        bytes([message_type | 0x80])
+        + request_id
+        + bytes(4)  # Response ID
+        + bytes([int(success), len(payload)])
+        + payload
+    )
+    return b"\xca\xfe" + crc16ccitt(body).to_bytes(2, "little") + body
+
+
 class Connections:
-    """Fake Bluetooth clients, one per connected address, with no real I/O."""
+    """Fake Bluetooth clients, one per connected address, with no real I/O.
+
+    Repeaters answer requests for a probe's revisions, unless its serial number is in
+    ``unreachable_probes``.
+    """
 
     def __init__(self) -> None:
         """Initialize."""
@@ -52,6 +80,18 @@ class Connections:
         self.attempts: list[str] = []
         self.failing: set[str] = set()
         self.unreachable: set[str] = set()
+        self.unreachable_probes: set[int] = set()
+        self.failing_disconnects = 0
+        """How many disconnects fail, leaving the client connected."""
+        self.stalled_reads: set[str] = set()
+        """Addresses whose characteristic reads never complete."""
+        self.disconnect_gate: asyncio.Event | None = None
+        """When set, disconnects wait for this event, as a slow disconnect would."""
+        self.commands_expected = False
+        """Whether the test sets targets. Otherwise any target set fails the test."""
+        self.command_success = True
+        self.requests: list[tuple[str, int, int]] = []
+        """Node requests written: address, message type, and probe serial number."""
 
     async def establish(
         self, _client_class, device, _name, *, disconnected_callback, **_
@@ -67,13 +107,53 @@ class Connections:
             client.callbacks[characteristic] = callback
 
         async def disconnect():
+            if self.disconnect_gate is not None:
+                await self.disconnect_gate.wait()
+            if self.failing_disconnects:
+                self.failing_disconnects -= 1
+                raise BleakError("disconnect failed")
             if client.is_connected:
                 client.is_connected = False
                 disconnected_callback(client)
 
         client.start_notify = AsyncMock(side_effect=start_notify)
         client.stop_notify = AsyncMock()
-        client.write_gatt_char = AsyncMock()
+
+        async def write_gatt_char(characteristic, frame, response):
+            assert characteristic == UART_RX_CHARACTERISTIC
+            message_type, request_id = frame[4], frame[5:9]
+            serial = frame[10:14]
+            self.requests.append(
+                (device.address, message_type, int.from_bytes(serial, "little"))
+            )
+            if message_type == SET_PREDICTION:
+                response = node_response_frame(
+                    message_type, request_id, b"", success=self.command_success
+                )
+            else:
+                revision = {
+                    PROBE_FIRMWARE_REVISION: PROBE_FIRMWARE,
+                    PROBE_HARDWARE_REVISION: PROBE_HARDWARE,
+                }.get(message_type)
+                if revision is None:
+                    return
+                success = (
+                    int.from_bytes(serial, "little") not in self.unreachable_probes
+                )
+                response = node_response_frame(
+                    message_type,
+                    request_id,
+                    serial + revision.encode().ljust(16, b"\x00") if success else b"",
+                    success=success,
+                )
+            asyncio.get_running_loop().call_soon(self.emit, device.address, response)
+
+        client.write_gatt_char = AsyncMock(side_effect=write_gatt_char)
+        client.read_gatt_char = AsyncMock(
+            side_effect=stall
+            if device.address in self.stalled_reads
+            else device_information(NODE_FIRMWARE, NODE_HARDWARE)
+        )
         client.disconnect = AsyncMock(side_effect=disconnect)
         client.drop = lambda: (
             setattr(client, "is_connected", False),
@@ -85,6 +165,12 @@ class Connections:
     def emit(self, address: str, data: bytes) -> None:
         """Send a UART notification from the client connected to ``address``."""
         self.clients[address].callbacks[UART_TX_CHARACTERISTIC](None, bytearray(data))
+
+
+async def stall(*_args) -> bytes:
+    """Stand in for a characteristic read that never completes."""
+    await asyncio.Event().wait()
+    raise AssertionError("unreachable")
 
 
 @pytest.fixture
@@ -106,8 +192,9 @@ def connections():
         ),
     ):
         yield fake
-    for client in fake.clients.values():
-        client.write_gatt_char.assert_not_called()  # Predictions are read-only.
+    if not fake.commands_expected:
+        # Only revisions are requested; targets are never set unless asked.
+        assert all(request[1] != SET_PREDICTION for request in fake.requests)
 
 
 async def enable_predictions(hass: HomeAssistant):
@@ -152,7 +239,7 @@ async def test_predictions_through_repeater(hass: HomeAssistant, connections):
 
     connections.emit(NODE_ADDRESS, node_status_frame(seconds=120))
     await hass.async_block_till_done()
-    assert get_state(hass, "sensor", f"{PROBE}--prediction_target").state == "65.0"
+    assert get_state(hass, "number", f"{PROBE}--prediction_target").state == "65.0"
     assert (
         get_state(hass, "sensor", f"{PROBE}--prediction_status").state == "predicting"
     )
@@ -316,12 +403,17 @@ async def test_failed_direct_release_is_retained(
 
 
 async def test_no_repeater_without_predictions(hass: HomeAssistant, connections):
-    """With predictions disabled, repeaters are never connected."""
+    """With predictions disabled, repeaters are only connected briefly, to read revisions."""
     entry = await setup_entry(hass)
     relay(hass)
     await tick(hass, entry)
     assert entry.runtime_data.repeater is None
-    assert not connections.attempts
+    for _ in range(50):
+        await asyncio.sleep(0)
+    assert connections.attempts == [NODE_ADDRESS]
+    connections.clients[NODE_ADDRESS].disconnect.assert_awaited_once()
+    await tick(hass, entry)
+    assert connections.attempts == [NODE_ADDRESS]
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 

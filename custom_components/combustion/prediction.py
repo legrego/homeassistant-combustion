@@ -1,13 +1,17 @@
-"""Home Assistant connection lifecycle for library-owned prediction sessions.
+"""Home Assistant connection lifecycle for library-owned sessions.
 
 A repeater monitor connects to one MeatNet repeater, which relays predictions for every probe on
-its network. Probe monitors connect directly to probes the repeater is not reporting.
+its network. Probe monitors connect directly to probes the repeater is not reporting. Both also
+run firmware and hardware revision reads. A revision monitor connects briefly, only to read
+revisions of devices no prediction connection covers.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
 from time import monotonic
+from typing import Any
 
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import (
@@ -15,7 +19,14 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
 )
-from combustion_ble import MeatNet, NodeSession, Probe, ProbeSession
+from combustion_ble import (
+    MeatNet,
+    NodeSession,
+    PredictionCommandRejectedError,
+    Probe,
+    ProbeSession,
+    RequestRejectedError,
+)
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 
@@ -30,9 +41,22 @@ RECONNECT_DELAY = 5
 CONNECT_TIMEOUT = 20
 SUBSCRIBE_TIMEOUT = 30
 CLEANUP_TIMEOUT = 10
+INFORMATION_TIMEOUT = 30
+"""Seconds to allow for reading a device's firmware and hardware revisions.
+
+Through a repeater, each revision is a request that may cross several MeatNet hops."""
+
+_READ_ERRORS = (*BLEAK_RETRY_EXCEPTIONS, OSError, RequestRejectedError, ValueError)
+"""Failures of an optional revision read, none of which affect the session."""
 
 
 type Session = ProbeSession | NodeSession
+
+type Read = Callable[[Session], Coroutine[Any, Any, None]]
+"""Reads revisions through a running session."""
+
+type ReadDone = Callable[[bool | None], None]
+"""Told whether a read succeeded, or ``None`` when it never ran."""
 
 
 class _ConnectionMonitor:
@@ -54,6 +78,79 @@ class _ConnectionMonitor:
         self._unreleased: tuple[BleakClientWithServiceCache, Session | None] | None = (
             None
         )
+        self._wake = asyncio.Event()
+        """Set when a running session has more work, or has disconnected."""
+        self._session_ended: asyncio.Event | None = None
+        """Set to end the running session, as a disconnect would."""
+        self._reads: dict[str, tuple[Read, ReadDone]] = {}
+        """Revision reads waiting for the session, by the name of the device they read."""
+        self.address: str | None = None
+        """Address of the device the running session is connected to."""
+        self._unrun_result: bool | None = None
+        """What reads that never ran are reported as."""
+        self._connecting = False
+        """Whether the running attempt is connecting or subscribing, before its session runs."""
+
+    @callback
+    def async_request_read(self, name: str, read: Read, done: ReadDone) -> bool:
+        """Queue a revision read on the running session. Return whether it was queued."""
+        if self._session is None:
+            return False
+        self._reads.setdefault(name, (read, done))
+        self._wake.set()
+        return True
+
+    async def _async_connected(
+        self, session: Session, disconnected: asyncio.Event
+    ) -> None:
+        """Run reads while a session is connected. Return once it disconnects."""
+        while not disconnected.is_set():
+            await self._async_run_reads(session, disconnected)
+            self._wake.clear()
+            if not disconnected.is_set() and not self._reads:
+                await self._wake.wait()
+
+    async def _async_run_reads(
+        self, session: Session, disconnected: asyncio.Event
+    ) -> None:
+        """Run queued reads one at a time, so they never crowd out relayed status.
+
+        A read stops when the session ends, rather than holding the connection until its own
+        timeout: Bluetooth reads don't notice the session closing, for example after a failed
+        command.
+        """
+        while self._reads and not disconnected.is_set():
+            name = next(iter(self._reads))
+            read, done = self._reads.pop(name)
+            reading = asyncio.ensure_future(
+                _async_read_information(read(session), name)
+            )
+            ended = asyncio.ensure_future(disconnected.wait())
+            try:
+                await asyncio.wait(
+                    (reading, ended), return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                ended.cancel()
+                if not reading.done():
+                    reading.cancel()
+                    # Unlike awaiting the read, this doesn't swallow this task's own cancellation.
+                    await asyncio.wait((reading,))
+                done(
+                    None
+                    if reading.cancelled() or reading.exception() is not None
+                    else reading.result()
+                )
+            if not reading.cancelled():
+                # Raise unexpected read errors, as before. A read stopped because the session
+                # ended is not an error: the session ran, so it reconnects after the usual delay.
+                reading.result()
+
+    @callback
+    def _async_drop_reads(self, result: bool | None) -> None:
+        reads, self._reads = self._reads, {}
+        for _, done in reads.values():
+            done(result)
 
     def _name(self) -> str:
         raise NotImplementedError
@@ -100,6 +197,7 @@ class _ConnectionMonitor:
             if await self._async_release_unreleased():
                 subscribed = await self._async_session(device)
         finally:
+            self._async_drop_reads(self._unrun_result)
             self._retry_at = monotonic() + (
                 RECONNECT_DELAY if subscribed else RETRY_DELAY
             )
@@ -120,7 +218,9 @@ class _ConnectionMonitor:
             if session is not None:
                 session.disconnected()
             disconnected.set()
+            self._wake.set()
 
+        self._connecting = True
         try:
             client = await establish_connection(
                 BleakClientWithServiceCache,
@@ -137,12 +237,18 @@ class _ConnectionMonitor:
             async with asyncio.timeout(SUBSCRIBE_TIMEOUT):
                 await session.start()
             subscribed = True
+            self._connecting = False
             self._session = session
-            await disconnected.wait()
+            self._session_ended = disconnected
+            self.address = device.address
+            await self._async_connected(session, disconnected)
         except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:
             LOGGER.debug("Prediction connection to %s failed: %s", device.address, err)
         finally:
+            self._connecting = False
             self._session = None
+            self._session_ended = None
+            self.address = None
             if client is not None:
                 # Recorded before cleanup, so cleanup that fails or is cancelled is retried
                 # before the next connection and when the monitor stops.
@@ -158,6 +264,13 @@ class _ConnectionMonitor:
             return False
         self._unreleased = None
         return True
+
+    @callback
+    def _async_end_session(self) -> None:
+        """Release the running session's connection. The next attempt makes a fresh one."""
+        if self._session_ended is not None:
+            self._session_ended.set()
+            self._wake.set()
 
     @property
     def cleanup_retry_ready(self) -> bool:
@@ -189,6 +302,31 @@ class PredictionMonitor(_ConnectionMonitor):
         super().__init__(hass, meatnet)
         self._probe = probe
 
+    @property
+    def session(self) -> ProbeSession | None:
+        """The probe session whose subscriptions are running, if any."""
+        return self._session if isinstance(self._session, ProbeSession) else None
+
+    async def async_set_prediction(self, celsius: float | None) -> None:
+        """Set the probe's removal target in Celsius, or cancel it with ``None``.
+
+        Raises the library's errors, or ``ConnectionError`` when no session is running.
+        """
+        if (session := self.session) is None:
+            raise ConnectionError("Probe is not connected")
+        try:
+            if celsius is None:
+                await session.cancel_prediction()
+            else:
+                await session.set_removal_temperature(celsius)
+        except PredictionCommandRejectedError:
+            raise
+        except BaseException:
+            # Direct responses carry no request ID, so the session closes itself after a failed,
+            # timed-out, or cancelled command. Release its connection to reconnect.
+            self._async_end_session()
+            raise
+
     def _name(self) -> str:
         return self._probe.serial_number_string
 
@@ -214,6 +352,21 @@ class RepeaterMonitor(_ConnectionMonitor):
         """The repeater session whose subscriptions are running, if any."""
         return self._session if isinstance(self._session, NodeSession) else None
 
+    async def async_set_prediction(
+        self, serial_number: int, celsius: float | None
+    ) -> None:
+        """Set a probe's removal target in Celsius through the repeater, or cancel it.
+
+        Raises the library's errors, or ``ConnectionError`` when no session is running. Failures
+        leave the session running.
+        """
+        if (session := self.session) is None:
+            raise ConnectionError("Repeater is not connected")
+        if celsius is None:
+            await session.cancel_prediction(serial_number)
+        else:
+            await session.set_removal_temperature(serial_number, celsius)
+
     @property
     def failed_addresses(self) -> frozenset[str]:
         """Repeaters that failed during this round of connection attempts."""
@@ -223,6 +376,129 @@ class RepeaterMonitor(_ConnectionMonitor):
     def reset_failures(self) -> None:
         """Begin another round once every reachable candidate has been tried."""
         self._failed_addresses.clear()
+
+
+class RevisionMonitor(_ConnectionMonitor):
+    """Connect briefly, only to read revisions, then disconnect.
+
+    Connects to a MeatNet node, which can read its own revisions and those of every probe it
+    relays, or directly to a probe. One connection at a time.
+    """
+
+    def __init__(self, hass: HomeAssistant, meatnet: MeatNet) -> None:
+        """Initialize an idle connection monitor."""
+        super().__init__(hass, meatnet)
+        self._probe: Probe | None = None
+        self._target: str | None = None
+        """Address of the device the current or unreleased connection is for."""
+        self._abandoned = False
+        """Whether the current connection has been asked to give way."""
+
+    @property
+    def held_address(self) -> str | None:
+        """The device this monitor is connecting, connected, or not yet released from.
+
+        That device can't take another session until this monitor lets it go.
+        """
+        if self._task is None and self._unreleased is None:
+            return None
+        return self._target
+
+    @callback
+    def async_cancel(self) -> None:
+        """Abandon the running connection, releasing it. Its unrun reads count as not tried.
+
+        Repeated calls do nothing more, and cleanup that has started always runs to completion:
+        interrupting a slow disconnect would hold the device until a later cleanup retry.
+        """
+        if self._task is None or self._abandoned:
+            return
+        self._abandoned = True
+        self._unrun_result = None
+        if self._session_ended is not None:
+            # Connected: end the session, which stops its read, then disconnects.
+            self._async_end_session()
+        elif self._connecting:
+            # Not connected yet, and establishing the connection doesn't watch for an ending.
+            self._task.cancel()
+        # Otherwise cleanup is already underway.
+
+    @callback
+    def async_read(
+        self, address: str, probe: Probe | None, reads: dict[str, tuple[Read, ReadDone]]
+    ) -> bool:
+        """Connect to the node at ``address``, or to ``probe`` directly, and run ``reads``.
+
+        Return ``False`` without doing anything while another connection is running or backing
+        off. Otherwise every read reports its result, including when no connection-capable adapter
+        can reach ``address``.
+        """
+        if not self.can_connect:
+            return False
+        self._probe = probe
+        self._target = address
+        self._abandoned = False
+        # The connection is the attempt, so reads it never runs have failed.
+        self._unrun_result = False
+        self._reads = dict(reads)
+        if not self.async_connect(address):
+            self._async_drop_reads(False)
+        return True
+
+    @callback
+    def async_retry_cleanup(self) -> None:
+        """Retry releasing a connection whose disconnect failed, pacing attempts.
+
+        Otherwise a failed disconnect would hold the connection until the next brief read, which
+        can be a day away.
+        """
+        if (
+            self._unreleased is None
+            or self._task is not None
+            or self._closed
+            or self.hass.is_stopping
+            or not self.cleanup_retry_ready
+        ):
+            return
+        self._task = self.hass.async_create_background_task(
+            self._async_cleanup(), "Combustion revisions cleanup", eager_start=False
+        )
+
+    async def _async_cleanup(self) -> None:
+        try:
+            if not await self._async_release_unreleased():
+                self._retry_at = monotonic() + RETRY_DELAY
+        finally:
+            self._task = None
+
+    async def _async_connected(
+        self, session: Session, disconnected: asyncio.Event
+    ) -> None:
+        await self._async_run_reads(session, disconnected)
+
+    def _name(self) -> str:
+        return "Combustion revisions"
+
+    def _create_session(
+        self, client: BleakClientWithServiceCache, address: str
+    ) -> Session:
+        if self._probe is not None:
+            return ProbeSession(self._meatnet, self._probe.serial_number, client)
+        return NodeSession(self._meatnet, address, client)
+
+
+async def _async_read_information(read: Coroutine[Any, Any, None], name: str) -> bool:
+    """Read firmware and hardware revisions. Return whether the read succeeded.
+
+    Revisions are optional, so failures are only logged and never affect the session.
+    """
+    try:
+        async with asyncio.timeout(INFORMATION_TIMEOUT):
+            await read
+    except _READ_ERRORS as err:
+        LOGGER.debug("Reading revisions of %s failed: %s", name, err)
+        return False
+    return True
 
 
 async def _async_release(
