@@ -1,8 +1,10 @@
 """Configuring, resetting, and turning off SafeCook from Home Assistant."""
 
+from time import monotonic
+
 import pytest
 import voluptuous as vol
-from combustion_ble import FoodSafeMode, Serving, SimplifiedProduct
+from combustion_ble import FoodSafeMode, MeatNet, Serving, SimplifiedProduct
 from combustion_ble.ble_data.food_safe_data import FoodSafeData
 from homeassistant.components.button import SERVICE_PRESS
 from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, STATE_UNKNOWN
@@ -12,9 +14,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.combustion.const import DOMAIN
+from custom_components.combustion.prediction import RepeaterMonitor
 from tests.test_cooking_target import connect_direct, entity_id, settle
 from tests.test_init import GAUGE, PROBE, get_state, setup_entry
-from tests.test_prediction import connection, food_safe_bytes, notify  # noqa: F401
+from tests.test_prediction import (  # noqa: F401
+    connection,
+    food_safe_bytes,
+    make_monitor,
+    notify,
+)
 from tests.test_repeater import (
     CONFIGURE_FOOD_SAFE,
     RESET_FOOD_SAFE,
@@ -194,6 +202,23 @@ async def test_without_connection(hass: HomeAssistant, connection):  # noqa: F81
     assert err.value.translation_key == "not_connected"
 
 
+async def test_monitors_without_session(hass: HomeAssistant):
+    """A monitor asked to send a command before its session runs sends nothing."""
+    monitor, _, _ = make_monitor(hass, monotonic)
+
+    async def direct(_session) -> None:
+        raise AssertionError("no session to send through")
+
+    with pytest.raises(ConnectionError):
+        await monitor.async_command(direct)
+
+    async def relayed(_session, _serial_number) -> None:
+        raise AssertionError("no session to send through")
+
+    with pytest.raises(ConnectionError):
+        await RepeaterMonitor(hass, MeatNet()).async_command(PROBE_SERIAL, relayed)
+
+
 async def test_predictions_disabled(hass: HomeAssistant):
     """Without prediction connections there are no SafeCook buttons, and the action explains."""
     await setup_entry(hass)
@@ -226,7 +251,10 @@ async def test_invalid_devices(hass: HomeAssistant):
     assert (await call(device_id(hass, GAUGE))).translation_key == "not_a_probe"
     assert (await call("missing")).translation_key == "not_a_probe"
 
-    # A probe left in the registry from an earlier run, not heard since starting.
+    # A probe left in the registry from an earlier run, not heard since starting, while
+    # another probe is.
+    inject_bt_advertisement(hass, service_info(probe_payload()))
+    await hass.async_block_till_done()
     stale = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, "1234abcd")},
