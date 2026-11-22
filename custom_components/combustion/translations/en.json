@@ -15,6 +15,12 @@
         "button": {
             "prediction_cancel": {
                 "name": "Cancel cooking target"
+            },
+            "food_safety_reset": {
+                "name": "Reset food safety progress"
+            },
+            "food_safety_off": {
+                "name": "Turn off food safety"
             }
         },
         "number": {
@@ -127,15 +133,74 @@
         },
         "command_timeout": {
             "message": "Probe {probe} did not acknowledge the cooking target command in time."
+        },
+        "food_safety_rejected": {
+            "message": "Probe {probe} rejected the SafeCook command. Its firmware may not support SafeCook."
+        },
+        "food_safety_timeout": {
+            "message": "Probe {probe} did not acknowledge the SafeCook command in time."
+        },
+        "not_a_probe": {
+            "message": "Choose a Combustion Predictive Thermometer."
+        },
+        "predictions_disabled": {
+            "message": "SafeCook commands need cooking predictions and SafeCook enabled in the Combustion integration options."
+        },
+        "probe_not_heard": {
+            "message": "Probe {probe} has not been heard since Home Assistant started."
         }
     },
     "options": {
         "step": {
             "init": {
-                "description": "Read cooking predictions and SafeCook food safety over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Cooking targets can then be set and cancelled from Home Assistant. Choose SafeCook programs in the Combustion app or Display.",
+                "description": "Read cooking predictions and SafeCook food safety over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Cooking targets and SafeCook programs can then be set from Home Assistant.",
                 "data": {
                     "enable_predictions": "Enable cooking predictions and SafeCook"
                 }
+            }
+        }
+    },
+    "services": {
+        "configure_safecook": {
+            "name": "Configure SafeCook",
+            "description": "Starts a Simplified SafeCook program on a probe, replacing its current program and restarting its progress. The probe applies USDA guidelines for the product.",
+            "fields": {
+                "device_id": {
+                    "name": "Probe",
+                    "description": "The probe to configure."
+                },
+                "product": {
+                    "name": "Product",
+                    "description": "The food being cooked. Accepts the same values the food safety product sensor reports for Simplified programs."
+                },
+                "serving": {
+                    "name": "Serving",
+                    "description": "How the food will be served."
+                }
+            }
+        }
+    },
+    "selector": {
+        "safecook_product": {
+            "options": {
+                "simplified_any_poultry": "Any poultry",
+                "simplified_beef_cuts": "Beef cuts",
+                "simplified_pork_cuts": "Pork cuts",
+                "simplified_veal_cuts": "Veal cuts",
+                "simplified_lamb_cuts": "Lamb cuts",
+                "simplified_ground_meats": "Ground meats",
+                "simplified_ham_fresh_or_smoked": "Ham, fresh or smoked",
+                "simplified_ham_cooked_and_reheated": "Ham, cooked and reheated",
+                "simplified_eggs": "Eggs",
+                "simplified_fish_and_shellfish": "Fish and shellfish",
+                "simplified_leftovers": "Leftovers",
+                "simplified_casseroles": "Casseroles"
+            }
+        },
+        "safecook_serving": {
+            "options": {
+                "served_immediately": "Served immediately",
+                "cooked_and_chilled": "Cooked and chilled"
             }
         }
     }

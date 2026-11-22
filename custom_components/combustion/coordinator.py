@@ -11,11 +11,14 @@ from combustion_ble import (
     COMBUSTION_MANUFACTURER_ID,
     ConnectionPlan,
     Device,
+    FoodSafeProgram,
     Gauge,
     MeatNet,
-    PredictionCommandRejectedError,
+    NodeSession,
     Probe,
     ProbeAdvertisement,
+    ProbeSession,
+    RequestRejectedError,
     parse_advertisement,
     plan_connections,
 )
@@ -28,7 +31,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, LOGGER, STALE_TIMEOUT
 from .entity import device_identifier
-from .prediction import PredictionMonitor, RepeaterMonitor
+from .prediction import NodeCommand, PredictionMonitor, ProbeCommand, RepeaterMonitor
 from .revisions import RevisionScheduler
 
 EXPIRE_INTERVAL = timedelta(seconds=1)
@@ -304,7 +307,7 @@ class CombustionCoordinator:
 
     @callback
     def can_command(self, probe: Probe) -> bool:
-        """Whether a running connection can set or cancel the probe's cooking target."""
+        """Whether a running connection can send the probe cooking target and SafeCook commands."""
         return self._command_route(probe) is not None
 
     @callback
@@ -331,25 +334,84 @@ class CombustionCoordinator:
         Returns once the probe acknowledges the command. Its predictions report the new target
         with their next status update.
         """
+        if celsius is None:
+            direct: ProbeCommand = ProbeSession.cancel_prediction
+            relayed: NodeCommand = NodeSession.cancel_prediction
+        else:
+
+            async def direct(session: ProbeSession) -> None:
+                await session.set_removal_temperature(celsius)
+
+            async def relayed(session: NodeSession, serial_number: int) -> None:
+                await session.set_removal_temperature(serial_number, celsius)
+
+        await self._async_command(
+            probe, direct, relayed, "command_rejected", "command_timeout"
+        )
+
+    async def async_configure_food_safe(
+        self, probe: Probe, program: FoodSafeProgram | None
+    ) -> None:
+        """Write a probe's SafeCook program, or turn SafeCook off with ``None``.
+
+        Returns once the probe acknowledges the command. Its status reports the new program.
+        """
+        if program is None:
+            direct: ProbeCommand = ProbeSession.clear_food_safe
+            relayed: NodeCommand = NodeSession.clear_food_safe
+        else:
+
+            async def direct(session: ProbeSession) -> None:
+                await session.configure_food_safe(program)
+
+            async def relayed(session: NodeSession, serial_number: int) -> None:
+                await session.configure_food_safe(serial_number, program)
+
+        await self._async_command(
+            probe, direct, relayed, "food_safety_rejected", "food_safety_timeout"
+        )
+
+    async def async_reset_food_safe(self, probe: Probe) -> None:
+        """Reset a probe's SafeCook progress, keeping its program."""
+        await self._async_command(
+            probe,
+            ProbeSession.reset_food_safe,
+            NodeSession.reset_food_safe,
+            "food_safety_rejected",
+            "food_safety_timeout",
+        )
+
+    async def _async_command(
+        self,
+        probe: Probe,
+        direct: ProbeCommand,
+        relayed: NodeCommand,
+        rejected_key: str,
+        timeout_key: str,
+    ) -> None:
+        """Send a command through the connection supplying the probe's predictions.
+
+        Raises a translated ``HomeAssistantError`` when it can't be delivered or acknowledged.
+        """
         route = self._command_route(probe)
         placeholders = {"probe": probe.serial_number_string}
         try:
             if isinstance(route, RepeaterMonitor):
-                await route.async_set_prediction(probe.serial_number, celsius)
+                await route.async_command(probe.serial_number, relayed)
             elif route is not None:
-                await route.async_set_prediction(celsius)
+                await route.async_command(direct)
             else:
                 raise ConnectionError("No prediction connection")
-        except PredictionCommandRejectedError as err:
+        except RequestRejectedError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
-                translation_key="command_rejected",
+                translation_key=rejected_key,
                 translation_placeholders=placeholders,
             ) from err
         except TimeoutError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
-                translation_key="command_timeout",
+                translation_key=timeout_key,
                 translation_placeholders=placeholders,
             ) from err
         except (*BLEAK_RETRY_EXCEPTIONS, OSError) as err:

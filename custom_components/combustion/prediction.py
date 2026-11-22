@@ -22,7 +22,6 @@ from bleak_retry_connector import (
 from combustion_ble import (
     MeatNet,
     NodeSession,
-    PredictionCommandRejectedError,
     Probe,
     ProbeSession,
     RequestRejectedError,
@@ -57,6 +56,12 @@ type Read = Callable[[Session], Coroutine[Any, Any, None]]
 
 type ReadDone = Callable[[bool | None], None]
 """Told whether a read succeeded, or ``None`` when it never ran."""
+
+type ProbeCommand = Callable[[ProbeSession], Coroutine[Any, Any, None]]
+"""Sends a command to the directly connected probe."""
+
+type NodeCommand = Callable[[NodeSession, int], Coroutine[Any, Any, None]]
+"""Sends a command through a repeater to the probe with this serial number."""
 
 
 class _ConnectionMonitor:
@@ -307,19 +312,16 @@ class PredictionMonitor(_ConnectionMonitor):
         """The probe session whose subscriptions are running, if any."""
         return self._session if isinstance(self._session, ProbeSession) else None
 
-    async def async_set_prediction(self, celsius: float | None) -> None:
-        """Set the probe's removal target in Celsius, or cancel it with ``None``.
+    async def async_command(self, command: ProbeCommand) -> None:
+        """Send a command to the probe and await its acknowledgement.
 
         Raises the library's errors, or ``ConnectionError`` when no session is running.
         """
         if (session := self.session) is None:
             raise ConnectionError("Probe is not connected")
         try:
-            if celsius is None:
-                await session.cancel_prediction()
-            else:
-                await session.set_removal_temperature(celsius)
-        except PredictionCommandRejectedError:
+            await command(session)
+        except RequestRejectedError:
             raise
         except BaseException:
             # Direct responses carry no request ID, so the session closes itself after a failed,
@@ -352,20 +354,15 @@ class RepeaterMonitor(_ConnectionMonitor):
         """The repeater session whose subscriptions are running, if any."""
         return self._session if isinstance(self._session, NodeSession) else None
 
-    async def async_set_prediction(
-        self, serial_number: int, celsius: float | None
-    ) -> None:
-        """Set a probe's removal target in Celsius through the repeater, or cancel it.
+    async def async_command(self, serial_number: int, command: NodeCommand) -> None:
+        """Send a command through the repeater to a probe and await its acknowledgement.
 
         Raises the library's errors, or ``ConnectionError`` when no session is running. Failures
         leave the session running.
         """
         if (session := self.session) is None:
             raise ConnectionError("Repeater is not connected")
-        if celsius is None:
-            await session.cancel_prediction(serial_number)
-        else:
-            await session.set_removal_temperature(serial_number, celsius)
+        await command(session, serial_number)
 
     @property
     def failed_addresses(self) -> frozenset[str]:

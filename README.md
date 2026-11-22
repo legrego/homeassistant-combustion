@@ -10,7 +10,7 @@ Integrate [Combustion](https://combustion.inc) Predictive Thermometers and Giant
 
 Device | Entities
 -- | --
-Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target (settable), time remaining, and prediction status, and SafeCook food safety.
+Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target (settable), time remaining, and prediction status, and SafeCook food safety (configurable).
 Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
 
 By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions and SafeCook use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise.
@@ -64,7 +64,7 @@ When cooking predictions are on, their connections also read versions. Otherwise
 
 ## Cooking predictions
 
-Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors](#safecook-food-safety). Disabling the option releases the connections and removes these entities.
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors and controls](#safecook-food-safety). Disabling the option releases the connections and removes these entities.
 
 This requires a Bluetooth adapter or proxy that supports active connections. Existing passive temperature sensors continue to work without connections.
 
@@ -88,18 +88,41 @@ Prediction connections also read firmware and hardware versions, shown on each p
 
 ### SafeCook food safety
 
-The same connection reports each probe's SafeCook program and its progress. Choose the program in the Combustion app or Display; this integration only reads it.
+The same connection reports each probe's SafeCook program and its progress. Programs can be chosen in the Combustion app or Display, or [from Home Assistant](#configuring-safecook).
 
 Sensor | Description
 -- | --
 Food safety | Off, not safe, safe, or safety impossible. Use it to trigger automations when food becomes safe.
-Food safety threshold temperature | The program's threshold temperature. In Simplified mode, food is safe once the core reaches it.
+Food safety threshold temperature | The program's threshold temperature. Unknown for Simplified programs that leave the threshold to the probe, such as those set from Home Assistant.
 Time above food safety threshold | How long the core has been above the threshold.
 Food safety log reduction | Integrated mode only: the pathogen log reduction so far.
 Food safety target log reduction | Integrated mode only: the log reduction that makes the food safe.
 Food safety product, Food safety serving | The program's product and serving (diagnostic).
 
-All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off in the app, food safety is **Off** and the other SafeCook sensors are unknown.
+All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off, food safety is **Off** and the other SafeCook sensors are unknown.
+
+### Configuring SafeCook
+
+The **Configure SafeCook** action (`combustion.configure_safecook`) starts a Simplified program on a probe. Choose the probe, the product, and how it will be served (served immediately by default). The probe applies USDA guidelines for the product itself, as it does for programs chosen in Combustion's apps. Configuring replaces the probe's current program and restarts its progress.
+
+```yaml
+action: combustion.configure_safecook
+data:
+  device_id: 0123456789abcdef0123456789abcdef
+  product: simplified_beef_cuts
+  serving: served_immediately
+```
+
+`product` takes the same values the Food safety product sensor reports for Simplified programs, except `simplified_default`: without parameters, the Default product served immediately is indistinguishable from SafeCook being off. Integrated programs, which need per-product parameters, can still be chosen in the Combustion app or Display.
+
+Each probe also gets two buttons:
+
+Button | Description
+-- | --
+Reset food safety progress | Restarts the program's progress, keeping the program. If the food already meets the program's conditions, it may report safe again right away.
+Turn off food safety | Turns SafeCook off, as turning it off in the app does.
+
+Commands go through the same connection as cooking targets and behave the same way: the buttons are unavailable while no connection reports the probe, the sensors update with the probe's next status, and a rejected or unacknowledged command fails with an error. Probe firmware without SafeCook support rejects them.
 
 ### Capture a local prediction report
 
@@ -117,7 +140,7 @@ The script prints raw and decoded status notifications and saves them to a times
 
 ## Known limitations
 
-- SafeCook programs must be set using the Combustion app or Display. This integration only reads them.
+- Only Simplified SafeCook programs can be configured from Home Assistant. Integrated programs set in the app are reported, and can be reset or turned off.
 - Only removal targets can be set. Removal-and-resting predictions set in the app are reported, but can't be set from Home Assistant.
 - Repeaters don't get entities of their own.
 - The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.
