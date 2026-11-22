@@ -383,6 +383,9 @@ class CombustionCoordinator:
         """Hold a written program until the probe reports it, or for a while if it never does."""
         serial_number = probe.serial_number
         self._async_drop_pending(serial_number)
+        if _reports(probe.food_safe, program):
+            # Status can arrive before the acknowledgement, already reporting the program.
+            return
 
         @callback
         def _async_on_change() -> None:

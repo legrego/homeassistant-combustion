@@ -512,3 +512,28 @@ async def test_reported_program_takes_over(
     await select(hass, SERVING, "served_immediately")
     program = FoodSafeData.from_bytes(sent_direct(client)[1])
     assert program.product is SimplifiedProduct(2)
+
+
+async def test_confirmed_before_acknowledgement(hass: HomeAssistant, connection):  # noqa: F811
+    """A program the probe reports before acknowledging it isn't held as pending."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    acknowledge = client.write_gatt_char.side_effect
+
+    async def confirm_then_acknowledge(characteristic, frame, response):
+        notify(client, food_safe=simplified(product=1))
+        await acknowledge(characteristic, frame, response)
+
+    client.write_gatt_char.side_effect = confirm_then_acknowledge
+    await select(hass, PRODUCT, "simplified_any_poultry")
+    client.write_gatt_char.side_effect = acknowledge
+
+    # Changed in Combustion's app, then the serving changed here.
+    notify(client, food_safe=simplified(product=2))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.BEEF_CUTS
