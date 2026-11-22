@@ -28,6 +28,48 @@
                 "name": "Cooking target temperature"
             }
         },
+        "select": {
+            "food_safety_product": {
+                "name": "Food safety product",
+                "state": {
+                    "simplified_default": "Default (Simplified)",
+                    "simplified_any_poultry": "Any poultry (Simplified)",
+                    "simplified_beef_cuts": "Beef cuts (Simplified)",
+                    "simplified_pork_cuts": "Pork cuts (Simplified)",
+                    "simplified_veal_cuts": "Veal cuts (Simplified)",
+                    "simplified_lamb_cuts": "Lamb cuts (Simplified)",
+                    "simplified_ground_meats": "Ground meats (Simplified)",
+                    "simplified_ham_fresh_or_smoked": "Ham, fresh or smoked (Simplified)",
+                    "simplified_ham_cooked_and_reheated": "Ham, cooked and reheated (Simplified)",
+                    "simplified_eggs": "Eggs (Simplified)",
+                    "simplified_fish_and_shellfish": "Fish and shellfish (Simplified)",
+                    "simplified_leftovers": "Leftovers (Simplified)",
+                    "simplified_casseroles": "Casseroles (Simplified)",
+                    "integrated_poultry": "Poultry (Integrated)",
+                    "integrated_meats": "Meats (Integrated)",
+                    "integrated_meats_ground": "Meats, ground, chopped, or stuffed (Integrated)",
+                    "integrated_poultry_ground": "Poultry, ground, chopped, or stuffed (Integrated)",
+                    "integrated_seafood": "Seafood (Integrated)",
+                    "integrated_seafood_ground": "Seafood, ground or chopped (Integrated)",
+                    "integrated_dairy_milk": "Dairy, milk (Integrated)",
+                    "integrated_other": "Other (Integrated)",
+                    "integrated_seafood_stuffed": "Seafood, stuffed (Integrated)",
+                    "integrated_eggs": "Eggs (Integrated)",
+                    "integrated_eggs_yolk": "Egg yolks (Integrated)",
+                    "integrated_eggs_white": "Egg whites (Integrated)",
+                    "integrated_dairy_creams": "Dairy, creams (Integrated)",
+                    "integrated_dairy_ice_cream_mix": "Dairy, ice cream mix (Integrated)",
+                    "integrated_custom": "Custom (Integrated)"
+                }
+            },
+            "food_safety_serving": {
+                "name": "Food safety serving",
+                "state": {
+                    "served_immediately": "Served immediately",
+                    "cooked_and_chilled": "Cooked and chilled"
+                }
+            }
+        },
         "sensor": {
             "core_temperature": {
                 "name": "Core temperature"
@@ -81,46 +123,6 @@
             },
             "food_safety_target_log_reduction": {
                 "name": "Food safety target log reduction"
-            },
-            "food_safety_product": {
-                "name": "Food safety product",
-                "state": {
-                    "simplified_default": "Default (Simplified)",
-                    "simplified_any_poultry": "Any poultry (Simplified)",
-                    "simplified_beef_cuts": "Beef cuts (Simplified)",
-                    "simplified_pork_cuts": "Pork cuts (Simplified)",
-                    "simplified_veal_cuts": "Veal cuts (Simplified)",
-                    "simplified_lamb_cuts": "Lamb cuts (Simplified)",
-                    "simplified_ground_meats": "Ground meats (Simplified)",
-                    "simplified_ham_fresh_or_smoked": "Ham, fresh or smoked (Simplified)",
-                    "simplified_ham_cooked_and_reheated": "Ham, cooked and reheated (Simplified)",
-                    "simplified_eggs": "Eggs (Simplified)",
-                    "simplified_fish_and_shellfish": "Fish and shellfish (Simplified)",
-                    "simplified_leftovers": "Leftovers (Simplified)",
-                    "simplified_casseroles": "Casseroles (Simplified)",
-                    "integrated_poultry": "Poultry (Integrated)",
-                    "integrated_meats": "Meats (Integrated)",
-                    "integrated_meats_ground": "Meats, ground, chopped, or stuffed (Integrated)",
-                    "integrated_poultry_ground": "Poultry, ground, chopped, or stuffed (Integrated)",
-                    "integrated_seafood": "Seafood (Integrated)",
-                    "integrated_seafood_ground": "Seafood, ground or chopped (Integrated)",
-                    "integrated_dairy_milk": "Dairy, milk (Integrated)",
-                    "integrated_other": "Other (Integrated)",
-                    "integrated_seafood_stuffed": "Seafood, stuffed (Integrated)",
-                    "integrated_eggs": "Eggs (Integrated)",
-                    "integrated_eggs_yolk": "Egg yolks (Integrated)",
-                    "integrated_eggs_white": "Egg whites (Integrated)",
-                    "integrated_dairy_creams": "Dairy, creams (Integrated)",
-                    "integrated_dairy_ice_cream_mix": "Dairy, ice cream mix (Integrated)",
-                    "integrated_custom": "Custom (Integrated)"
-                }
-            },
-            "food_safety_serving": {
-                "name": "Food safety serving",
-                "state": {
-                    "served_immediately": "Served immediately",
-                    "cooked_and_chilled": "Cooked and chilled"
-                }
             }
         }
     },
@@ -148,6 +150,15 @@
         },
         "probe_not_heard": {
             "message": "Probe {probe} has not been heard since Home Assistant started."
+        },
+        "food_safety_product_unsupported": {
+            "message": "Only Simplified programs, other than Default, can be started from Home Assistant. Choose other programs in the Combustion app or Display."
+        },
+        "food_safety_serving_unsupported": {
+            "message": "The serving can only be changed for Simplified programs, other than Default. Change this program in the Combustion app or Display."
+        },
+        "food_safety_no_program": {
+            "message": "Choose a food safety product first."
         }
     },
     "options": {
