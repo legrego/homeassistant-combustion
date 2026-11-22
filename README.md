@@ -97,11 +97,21 @@ Food safety threshold temperature | The program's threshold temperature. Unknown
 Time above food safety threshold | How long the core has been above the threshold.
 Food safety log reduction | Integrated mode only: the pathogen log reduction so far.
 Food safety target log reduction | Integrated mode only: the log reduction that makes the food safe.
-Food safety product, Food safety serving | The program's product and serving (diagnostic).
 
-All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off, food safety is **Off** and the other SafeCook sensors are unknown.
+All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off, food safety is **Off** and the other SafeCook sensors are unknown. The program's product and serving are [selects](#configuring-safecook).
 
 ### Configuring SafeCook
+
+Each probe has two selects:
+
+Select | Description
+-- | --
+Food safety product | The program's product. Choosing a product starts a Simplified program for it, keeping the current serving (served immediately if SafeCook is off).
+Food safety serving | How the food will be served. Choosing one restarts the current Simplified program with it.
+
+They show every product a probe can report, so programs chosen in the app show too. Integrated products, and the Simplified Default product, can't be started from Home Assistant yet: choosing one, or changing the serving of such a program, fails with an error explaining why. Changing either select replaces the program and restarts its progress, so choosing a product and then a serving restarts it twice; the action below sets both at once.
+
+The product and serving used to be read-only diagnostic sensors. Dashboards and automations that used `sensor.<probe>_food_safety_product` or `sensor.<probe>_food_safety_serving` need to use `select.<probe>_food_safety_product` or `select.<probe>_food_safety_serving` instead.
 
 The **Configure SafeCook** action (`combustion.configure_safecook`) starts a Simplified program on a probe. Choose the probe, the product, and how it will be served (served immediately by default). The probe applies USDA guidelines for the product itself, as it does for programs chosen in Combustion's apps. Configuring replaces the probe's current program and restarts its progress.
 
@@ -113,7 +123,7 @@ data:
   serving: served_immediately
 ```
 
-`product` takes the same values the Food safety product sensor reports for Simplified programs, except `simplified_default`: without parameters, the Default product served immediately is indistinguishable from SafeCook being off. Integrated programs, which need per-product parameters, can still be chosen in the Combustion app or Display.
+`product` takes the same values as the Food safety product select for Simplified programs, except `simplified_default`: without parameters, the Default product served immediately is indistinguishable from SafeCook being off. Integrated programs, which need per-product parameters, can still be chosen in the Combustion app or Display.
 
 Each probe also gets two buttons:
 
@@ -122,7 +132,7 @@ Button | Description
 Reset food safety progress | Restarts the program's progress, keeping the program. If the food already meets the program's conditions, it may report safe again right away.
 Turn off food safety | Turns SafeCook off, as turning it off in the app does.
 
-Commands go through the same connection as cooking targets and behave the same way: the buttons are unavailable while no connection reports the probe, the sensors update with the probe's next status, and a rejected or unacknowledged command fails with an error. Probe firmware without SafeCook support rejects them.
+Commands go through the same connection as cooking targets and behave the same way: the selects and buttons are unavailable while no connection reports the probe, the selects and sensors update with the probe's next status, and a rejected or unacknowledged command fails with an error. Probe firmware without SafeCook support rejects them.
 
 ### Capture a local prediction report
 

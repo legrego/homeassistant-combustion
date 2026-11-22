@@ -1,7 +1,7 @@
 """SafeCook food safety sensors, read from the same connected status as predictions."""
 
 import pytest
-from homeassistant.const import STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 
 from custom_components.combustion.const import CONF_ENABLE_PREDICTIONS
@@ -18,12 +18,18 @@ from tests.test_repeater import (  # noqa: F401
 from tests.utils.bt_utils import NODE_ADDRESS, inject_bt_advertisement, probe_payload
 from tests.utils.bt_utils import service_info as make_service_info
 
-KEYS = [description.key for description in FOOD_SAFETY_SENSORS]
+SELECT_KEYS = ["food_safety_product", "food_safety_serving"]
+KEYS = [description.key for description in FOOD_SAFETY_SENSORS] + SELECT_KEYS
 
 
 def states(hass: HomeAssistant) -> dict[str, str]:
-    """State of every SafeCook sensor, by description key."""
-    return {key: get_state(hass, "sensor", f"{PROBE}--{key}").state for key in KEYS}
+    """State of every SafeCook sensor and select, by description key."""
+    return {
+        key: get_state(
+            hass, "select" if key in SELECT_KEYS else "sensor", f"{PROBE}--{key}"
+        ).state
+        for key in KEYS
+    }
 
 
 async def connect_direct(hass: HomeAssistant, connection):  # noqa: F811
@@ -36,6 +42,7 @@ async def connect_direct(hass: HomeAssistant, connection):  # noqa: F811
     await hass.async_block_till_done()
     inject_bt_advertisement(hass, make_service_info(probe_payload()))
     await hass.async_block_till_done()
+    await tick(hass, entry)  # The selects learn of the connection on the next tick.
 
     async def send(**kwargs):
         client.start_notify.call_args.args[1](None, status_packet(**kwargs))
@@ -70,7 +77,7 @@ async def test_integrated_program(hass: HomeAssistant, connection):  # noqa: F81
     )
     assert get_state(hass, "sensor", f"{PROBE}--food_safety").state == "safe"
     assert (
-        get_state(hass, "sensor", f"{PROBE}--food_safety_serving").state
+        get_state(hass, "select", f"{PROBE}--food_safety_serving").state
         == "cooked_and_chilled"
     )
 
@@ -79,6 +86,11 @@ async def test_integrated_program(hass: HomeAssistant, connection):  # noqa: F81
     establish.call_args.kwargs["disconnected_callback"](client)
     await hass.async_block_till_done()
     assert set(states(hass).values()) == {STATE_UNKNOWN}
+    # The selects learn that the connection ended on the next tick.
+    await tick(hass, entry)
+    assert states(hass) == dict.fromkeys(KEYS, STATE_UNKNOWN) | dict.fromkeys(
+        SELECT_KEYS, STATE_UNAVAILABLE
+    )
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -143,7 +155,7 @@ async def test_food_safety_through_repeater(hass: HomeAssistant, connections):  
     await hass.async_block_till_done()
     assert get_state(hass, "sensor", f"{PROBE}--food_safety").state == "safe"
     assert (
-        get_state(hass, "sensor", f"{PROBE}--food_safety_product").state
+        get_state(hass, "select", f"{PROBE}--food_safety_product").state
         == "integrated_meats_ground"
     )
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -215,7 +227,7 @@ async def test_turning_safecook_off(hass: HomeAssistant, connection):  # noqa: F
     await send(food_safe=food_safe_bytes(mode=0, product=0, threshold=73.9))
     assert get_state(hass, "sensor", f"{PROBE}--food_safety").state == "not_safe"
     assert (
-        get_state(hass, "sensor", f"{PROBE}--food_safety_product").state
+        get_state(hass, "select", f"{PROBE}--food_safety_product").state
         == "simplified_default"
     )
     assert await hass.config_entries.async_unload(entry.entry_id)

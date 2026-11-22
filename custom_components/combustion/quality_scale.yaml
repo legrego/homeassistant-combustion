@@ -73,7 +73,7 @@ rules:
   # Silver
   action-exceptions:
     status: done
-    comment: Cooking target and SafeCook commands raise a translated HomeAssistantError when no connection reaches the probe, the probe or repeater rejects the command, or it times out. The SafeCook action raises ServiceValidationError for devices that aren't probes, probes not heard yet, and predictions being disabled.
+    comment: Cooking target and SafeCook commands raise a translated HomeAssistantError when no connection reaches the probe, the probe or repeater rejects the command, or it times out. The SafeCook action raises ServiceValidationError for devices that aren't probes, probes not heard yet, and predictions being disabled; the SafeCook selects raise it for programs that can't be written from Home Assistant.
   config-entry-unloading:
     status: done
     comment: async_unload_entry unloads both platforms; unload callbacks remove Bluetooth, timer, and platform listeners. Tests cover unloading and reloading with existing and newly discovered devices.

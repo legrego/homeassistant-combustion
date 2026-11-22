@@ -1,5 +1,6 @@
 """Configuring, resetting, and turning off SafeCook from Home Assistant."""
 
+import asyncio
 from time import monotonic
 
 import pytest
@@ -7,13 +8,21 @@ import voluptuous as vol
 from combustion_ble import FoodSafeMode, MeatNet, Serving, SimplifiedProduct
 from combustion_ble.ble_data.food_safe_data import FoodSafeData
 from homeassistant.components.button import SERVICE_PRESS
-from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, STATE_UNKNOWN
+from homeassistant.components.select import ATTR_OPTION, SERVICE_SELECT_OPTION
+from homeassistant.const import (
+    ATTR_DEVICE_ID,
+    ATTR_ENTITY_ID,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.combustion.const import DOMAIN
+from custom_components.combustion.const import DOMAIN, MEATNET_UNIQUE_ID
+from custom_components.combustion.coordinator import PENDING_FOOD_SAFE_TIMEOUT
 from custom_components.combustion.prediction import RepeaterMonitor
 from tests.test_cooking_target import connect_direct, entity_id, settle
 from tests.test_init import GAUGE, PROBE, get_state, setup_entry
@@ -44,6 +53,8 @@ from tests.utils.bt_utils import (
 
 RESET = f"{PROBE}--food_safety_reset"
 OFF = f"{PROBE}--food_safety_off"
+PRODUCT = f"{PROBE}--food_safety_product"
+SERVING = f"{PROBE}--food_safety_serving"
 
 
 def device_id(hass: HomeAssistant, identifier: str = PROBE) -> str:
@@ -76,6 +87,31 @@ async def press(hass: HomeAssistant, unique_id: str) -> None:
     )
 
 
+async def select(hass: HomeAssistant, unique_id: str, option: str) -> None:
+    """Choose an option on one of the probe's selects."""
+    await hass.services.async_call(
+        "select",
+        SERVICE_SELECT_OPTION,
+        {ATTR_ENTITY_ID: entity_id(hass, "select", unique_id), ATTR_OPTION: option},
+        blocking=True,
+    )
+
+
+def simplified(product: int, serving: int = 0) -> bytes:
+    """Food safe data and status for a Simplified program written without parameters."""
+    return food_safe_bytes(
+        mode=0,
+        product=product,
+        serving=serving,
+        threshold=0,
+        z_value=0,
+        reference=0,
+        d_value=0,
+        target_log_reduction=0,
+        log_reduction=0,
+    )
+
+
 def sent_direct(client) -> tuple[int, bytes]:
     """Return the message type and payload of the last command written to the probe."""
     frame = client.write_gatt_char.call_args.args[1]
@@ -105,22 +141,9 @@ async def test_configure_directly(hass: HomeAssistant, connection):  # noqa: F81
     assert program.serving is Serving.COOKED_AND_CHILLED
 
     # The probe reports the program without a threshold, which isn't shown as 0 °C.
-    notify(
-        client,
-        food_safe=food_safe_bytes(
-            mode=0,
-            product=1,
-            serving=1,
-            threshold=0,
-            z_value=0,
-            reference=0,
-            d_value=0,
-            target_log_reduction=0,
-            log_reduction=0,
-        ),
-    )
+    notify(client, food_safe=simplified(product=1, serving=1))
     await hass.async_block_till_done()
-    product = get_state(hass, "sensor", f"{PROBE}--food_safety_product")
+    product = get_state(hass, "select", f"{PROBE}--food_safety_product")
     assert product.state == "simplified_any_poultry"
     threshold = get_state(hass, "sensor", f"{PROBE}--food_safety_threshold")
     assert threshold.state == STATE_UNKNOWN
@@ -225,8 +248,13 @@ async def test_predictions_disabled(hass: HomeAssistant):
     inject_bt_advertisement(hass, service_info(probe_payload()))
     await hass.async_block_till_done()
     registry = er.async_get(hass)
-    for unique_id in (RESET, OFF):
-        assert registry.async_get_entity_id("button", DOMAIN, unique_id) is None
+    for platform, unique_id in (
+        ("button", RESET),
+        ("button", OFF),
+        ("select", PRODUCT),
+        ("select", SERVING),
+    ):
+        assert registry.async_get_entity_id(platform, DOMAIN, unique_id) is None
     with pytest.raises(ServiceValidationError) as err:
         await configure(hass, product="simplified_leftovers")
     assert err.value.translation_key == "predictions_disabled"
@@ -283,3 +311,229 @@ async def test_invalid_programs(hass: HomeAssistant, data):
     await hass.async_block_till_done()
     with pytest.raises(vol.Invalid):
         await configure(hass, **data)
+
+
+async def test_selects_directly(hass: HomeAssistant, connection):  # noqa: F811
+    """The selects start and change Simplified programs; status confirms them."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    assert get_state(hass, "select", PRODUCT).state == STATE_UNKNOWN
+    # With SafeCook off, there is no program to change the serving of.
+    with pytest.raises(ServiceValidationError) as err:
+        await select(hass, SERVING, "cooked_and_chilled")
+    assert err.value.translation_key == "food_safety_no_program"
+    notify(client, food_safe=bytes(18))
+    await hass.async_block_till_done()
+    with pytest.raises(ServiceValidationError) as err:
+        await select(hass, SERVING, "cooked_and_chilled")
+    assert err.value.translation_key == "food_safety_no_program"
+
+    # A product starts a program served immediately when SafeCook is off.
+    await select(hass, PRODUCT, "simplified_pork_cuts")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.PORK_CUTS
+    assert program.serving is Serving.SERVED_IMMEDIATELY
+    # The select follows the probe's status, not the command.
+    assert get_state(hass, "select", PRODUCT).state == STATE_UNKNOWN
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+    assert get_state(hass, "select", PRODUCT).state == "simplified_pork_cuts"
+    assert get_state(hass, "select", SERVING).state == "served_immediately"
+
+    # The serving restarts the program with the same product.
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.PORK_CUTS
+    assert program.serving is Serving.COOKED_AND_CHILLED
+
+    # A new product keeps the current serving.
+    notify(client, food_safe=simplified(product=3, serving=1))
+    await hass.async_block_till_done()
+    await select(hass, PRODUCT, "simplified_eggs")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.EGGS
+    assert program.serving is Serving.COOKED_AND_CHILLED
+    client.disconnect.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("program", "error"),
+    [
+        # Integrated presets aren't known, so their programs are only shown.
+        (food_safe_bytes(), "food_safety_serving_unsupported"),
+        # Default served immediately can't be told apart from SafeCook off.
+        (simplified(product=0, serving=1), "food_safety_serving_unsupported"),
+    ],
+    ids=["integrated", "default"],
+)
+async def test_selects_refuse_unwritable_programs(
+    hass: HomeAssistant,
+    connection,  # noqa: F811
+    program,
+    error,
+):
+    """Programs set in the app show in the selects, but only Simplified ones can be written."""
+    client, _ = connection
+    client.commands_expected = False
+    await connect_direct(hass, client)
+    notify(client, food_safe=program)
+    await hass.async_block_till_done()
+    assert get_state(hass, "select", PRODUCT).state != STATE_UNKNOWN
+    for option in ("integrated_poultry", "integrated_custom", "simplified_default"):
+        with pytest.raises(ServiceValidationError) as err:
+            await select(hass, PRODUCT, option)
+        assert err.value.translation_key == "food_safety_product_unsupported"
+    with pytest.raises(ServiceValidationError) as err:
+        await select(hass, SERVING, "served_immediately")
+    assert err.value.translation_key == error
+
+
+async def test_selects_through_repeater(hass: HomeAssistant, connections):  # noqa: F811
+    """The selects command a probe the repeater reports through the repeater."""
+    connections.commands_expected = True
+    entry = await enable_predictions(hass)
+    relay(hass)
+    await tick(hass, entry)
+    assert get_state(hass, "select", PRODUCT).state == STATE_UNAVAILABLE
+    connections.emit(NODE_ADDRESS, node_status_frame(mode=0, food_safe=simplified(1)))
+    await tick(hass, entry)
+    await settle(hass)
+    assert get_state(hass, "select", PRODUCT).state == "simplified_any_poultry"
+
+    await select(hass, SERVING, "cooked_and_chilled")
+    frame = connections.clients[NODE_ADDRESS].write_gatt_char.call_args.args[1]
+    assert frame[4] == CONFIGURE_FOOD_SAFE
+    assert int.from_bytes(frame[10:14], "little") == PROBE_SERIAL
+    program = FoodSafeData.from_bytes(frame[14:24])
+    assert program.product is SimplifiedProduct.ANY_POULTRY
+    assert program.serving is Serving.COOKED_AND_CHILLED
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_legacy_sensors_are_removed(hass: HomeAssistant):
+    """The read-only product and serving sensors that the selects replaced are removed."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=MEATNET_UNIQUE_ID)
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    for unique_id in (PRODUCT, SERVING):
+        registry.async_get_or_create("sensor", DOMAIN, unique_id, config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    for unique_id in (PRODUCT, SERVING):
+        assert not registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+
+
+async def test_consecutive_selects_before_status(hass: HomeAssistant, connection):  # noqa: F811
+    """A change made before the probe reports the previous one builds on the previous one."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    await select(hass, PRODUCT, "simplified_any_poultry")
+    # The probe still reports pork until its next status.
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.ANY_POULTRY
+    assert program.serving is Serving.COOKED_AND_CHILLED
+    await select(hass, PRODUCT, "simplified_eggs")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.EGGS
+    assert program.serving is Serving.COOKED_AND_CHILLED
+
+    # A status from before the writes doesn't replace them.
+    notify(client, food_safe=simplified(product=1, serving=0))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "served_immediately")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.EGGS
+
+    # Turning SafeCook off counts too: there's no program left to change the serving of.
+    await press(hass, OFF)
+    with pytest.raises(ServiceValidationError) as err:
+        await select(hass, SERVING, "cooked_and_chilled")
+    assert err.value.translation_key == "food_safety_no_program"
+
+    # Once the probe reports SafeCook off, a program started in Combustion's app shows through.
+    notify(client, food_safe=bytes(18))
+    await hass.async_block_till_done()
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.PORK_CUTS
+
+
+async def test_concurrent_selects(hass: HomeAssistant, connection):  # noqa: F811
+    """Changes made at the same time are written one after another, each building on the last."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    await asyncio.gather(
+        select(hass, PRODUCT, "simplified_any_poultry"),
+        select(hass, SERVING, "cooked_and_chilled"),
+    )
+    programs = [
+        FoodSafeData.from_bytes(call.args[1][6:16])
+        for call in client.write_gatt_char.call_args_list[-2:]
+    ]
+    assert [(p.product, p.serving) for p in programs] == [
+        (SimplifiedProduct.ANY_POULTRY, Serving.SERVED_IMMEDIATELY),
+        (SimplifiedProduct.ANY_POULTRY, Serving.COOKED_AND_CHILLED),
+    ]
+
+
+async def test_reported_program_takes_over(
+    hass: HomeAssistant,
+    connection,  # noqa: F811
+    freezer,
+):
+    """Once the probe reports a written program, or stops confirming it, status is followed again."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    # Confirmed by status, then changed in Combustion's app.
+    await select(hass, PRODUCT, "simplified_any_poultry")
+    notify(client, food_safe=simplified(product=1))
+    await hass.async_block_till_done()
+    notify(client, food_safe=simplified(product=2))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct(2)
+
+    # Never confirmed: after a while, the probe's status wins.
+    await select(hass, PRODUCT, "simplified_eggs")
+    freezer.tick(PENDING_FOOD_SAFE_TIMEOUT)
+    await select(hass, SERVING, "served_immediately")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct(2)
+
+
+async def test_confirmed_before_acknowledgement(hass: HomeAssistant, connection):  # noqa: F811
+    """A program the probe reports before acknowledging it isn't held as pending."""
+    client, _ = connection
+    await connect_direct(hass, client)
+    notify(client, food_safe=simplified(product=3))
+    await hass.async_block_till_done()
+
+    acknowledge = client.write_gatt_char.side_effect
+
+    async def confirm_then_acknowledge(characteristic, frame, response):
+        notify(client, food_safe=simplified(product=1))
+        await acknowledge(characteristic, frame, response)
+
+    client.write_gatt_char.side_effect = confirm_then_acknowledge
+    await select(hass, PRODUCT, "simplified_any_poultry")
+    client.write_gatt_char.side_effect = acknowledge
+
+    # Changed in Combustion's app, then the serving changed here.
+    notify(client, food_safe=simplified(product=2))
+    await hass.async_block_till_done()
+    await select(hass, SERVING, "cooked_and_chilled")
+    program = FoodSafeData.from_bytes(sent_direct(client)[1])
+    assert program.product is SimplifiedProduct.BEEF_CUTS

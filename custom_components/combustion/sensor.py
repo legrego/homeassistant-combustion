@@ -8,15 +8,10 @@ from typing import Any
 
 from combustion_ble import (
     Device,
-    FoodSafe,
-    FoodSafeMode,
     FoodSafeState,
     Gauge,
-    IntegratedProduct,
     PredictionState,
     Probe,
-    Serving,
-    SimplifiedProduct,
 )
 from homeassistant.components.sensor import (
     DOMAIN as SENSOR_DOMAIN,
@@ -39,6 +34,7 @@ from homeassistant.helpers.typing import StateType
 
 from .coordinator import CombustionConfigEntry
 from .entity import CombustionEntity, async_remove_entities, prediction_active
+from .food_safety import food_safe_value
 
 # Entities only update from pushed advertisements.
 PARALLEL_UPDATES = 0
@@ -148,8 +144,9 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Add sensors for each probe and gauge as it is discovered."""
-    # The cooking target became a number entity, which can also set it.
-    removed = {"prediction_target"}
+    # The cooking target became a number entity, and the SafeCook product and serving became
+    # selects, which can also set them.
+    removed = {"prediction_target", "food_safety_product", "food_safety_serving"}
     if not entry.runtime_data.enable_predictions:
         removed.update(description.key for description in CONNECTED_SENSORS)
     async_remove_entities(hass, entry.entry_id, SENSOR_DOMAIN, removed)
@@ -229,51 +226,10 @@ PREDICTION_SENSORS = (
 )
 
 
-# SafeCook comes from the same connected status as predictions, so it shares their option.
-
-
-def _food_safe_value(
-    fn: Callable[[FoodSafe], StateType], *, integrated_only: bool = False
-) -> Callable[[Probe], StateType]:
-    """Read from the probe's SafeCook program.
-
-    Unknown until a connection reports SafeCook data, and while SafeCook is off.
-    """
-
-    def value(probe: Probe) -> StateType:
-        if (food_safe := probe.food_safe) is None or not food_safe.program_set:
-            return None
-        if integrated_only and food_safe.mode is not FoodSafeMode.INTEGRATED:
-            # Simplified mode always reports 0, which would read as no progress.
-            return None
-        return fn(food_safe)
-
-    return value
-
-
 FOOD_SAFETY_STATES = {
     FoodSafeState.NOT_SAFE: "not_safe",
     FoodSafeState.SAFE: "safe",
     FoodSafeState.SAFETY_IMPOSSIBLE: "safety_impossible",
-}
-
-_PRODUCT_PREFIXES = {SimplifiedProduct: "simplified", IntegratedProduct: "integrated"}
-
-
-def _product_option(product: SimplifiedProduct | IntegratedProduct) -> str:
-    # Both modes number their products from 0, so options name the mode too.
-    return f"{_PRODUCT_PREFIXES[type(product)]}_{product.name.lower()}"
-
-
-FOOD_SAFETY_PRODUCTS = [
-    _product_option(product)
-    for product_type in _PRODUCT_PREFIXES
-    for product in product_type
-]
-
-FOOD_SAFETY_SERVINGS = {
-    Serving.SERVED_IMMEDIATELY: "served_immediately",
-    Serving.COOKED_AND_CHILLED: "cooked_and_chilled",
 }
 
 
@@ -284,14 +240,6 @@ def _food_safety_state(probe: Probe) -> str | None:
         return "off"
     if isinstance(food_safe.state, FoodSafeState):
         return FOOD_SAFETY_STATES[food_safe.state]
-    return None
-
-
-def _food_safety_product(food_safe: FoodSafe) -> str | None:
-    product = food_safe.product
-    # Unknown products are kept as plain integers.
-    if isinstance(product, SimplifiedProduct | IntegratedProduct):
-        return _product_option(product)
     return None
 
 
@@ -307,7 +255,7 @@ FOOD_SAFETY_SENSORS = (
         "food_safety_threshold",
         # Simplified programs written without a threshold, as Combustion's Android library and
         # this integration's action do, leave the threshold to the firmware's product rules.
-        _food_safe_value(lambda food_safe: food_safe.threshold_temperature or None),
+        food_safe_value(lambda food_safe: food_safe.threshold_temperature or None),
         translation_key="food_safety_threshold",
         # Part of the program, not a measurement.
         state_class=None,
@@ -318,13 +266,13 @@ FOOD_SAFETY_SENSORS = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.SECONDS,
         suggested_display_precision=0,
-        value_fn=_food_safe_value(lambda food_safe: food_safe.seconds_above_threshold),
+        value_fn=food_safe_value(lambda food_safe: food_safe.seconds_above_threshold),
     ),
     CombustionSensorEntityDescription(
         key="food_safety_log_reduction",
         translation_key="food_safety_log_reduction",
         suggested_display_precision=1,
-        value_fn=_food_safe_value(
+        value_fn=food_safe_value(
             lambda food_safe: food_safe.log_reduction, integrated_only=True
         ),
     ),
@@ -332,30 +280,8 @@ FOOD_SAFETY_SENSORS = (
         key="food_safety_target_log_reduction",
         translation_key="food_safety_target_log_reduction",
         suggested_display_precision=1,
-        value_fn=_food_safe_value(
+        value_fn=food_safe_value(
             lambda food_safe: food_safe.target_log_reduction, integrated_only=True
-        ),
-    ),
-    CombustionSensorEntityDescription(
-        key="food_safety_product",
-        translation_key="food_safety_product",
-        device_class=SensorDeviceClass.ENUM,
-        options=FOOD_SAFETY_PRODUCTS,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=_food_safe_value(_food_safety_product),
-    ),
-    CombustionSensorEntityDescription(
-        key="food_safety_serving",
-        translation_key="food_safety_serving",
-        device_class=SensorDeviceClass.ENUM,
-        options=list(FOOD_SAFETY_SERVINGS.values()),
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=_food_safe_value(
-            lambda food_safe: (
-                FOOD_SAFETY_SERVINGS[food_safe.serving]
-                if isinstance(food_safe.serving, Serving)
-                else None
-            )
         ),
     ),
 )
