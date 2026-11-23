@@ -27,6 +27,7 @@ from tests.utils.cloud_utils import (
     CLOUD_DATA,
     EMAIL,
     PASSWORD,
+    REFRESH_TOKEN,
     FakeCloud,
     settle_hass,
     tokens,
@@ -138,6 +139,53 @@ async def test_link_blank(
     )
     assert result["errors"] == {"base": "invalid_auth"}
     assert not cloud.clients
+
+
+async def test_link_twice(hass: HomeAssistant, cloud: FakeCloud) -> None:
+    """A second dialog that signs in to the same account replaces the session in use."""
+    entry = await setup_entry(hass)
+    first = await open_options(hass, entry, "link_cloud")
+    second = await open_options(hass, entry, "link_cloud")
+    result = await hass.config_entries.options.async_configure(
+        first["flow_id"], SIGN_IN
+    )
+    assert result["reason"] == "cloud_linked"
+    await settle_hass(hass)
+    await cloud.connect()
+    coordinator = entry.runtime_data
+    (session,) = [client for client in cloud.clients if client.on_token_update]
+
+    cloud.login_tokens = tokens("second-token")
+    result = await hass.config_entries.options.async_configure(
+        second["flow_id"], SIGN_IN
+    )
+    assert result["reason"] == "cloud_linked"
+    await settle_hass(hass)
+    assert cloud.resumed == [REFRESH_TOKEN, "second-token"]
+    assert session.closed
+    assert entry.runtime_data is coordinator
+    session.on_token_update(tokens("too-late"))
+    assert entry.data[CONF_CLOUD][CONF_REFRESH_TOKEN] == "second-token"
+    await cloud.connect()
+    assert coordinator.cloud.connected
+
+
+async def test_link_after_rejection(hass: HomeAssistant, cloud: FakeCloud) -> None:
+    """A second dialog that signs in also withdraws a request to sign in again."""
+    entry = await setup_entry(hass)
+    first = await open_options(hass, entry, "link_cloud")
+    second = await open_options(hass, entry, "link_cloud")
+    cloud.failures["resume"] = [AuthenticationError("Rejected")]
+    await hass.config_entries.options.async_configure(first["flow_id"], SIGN_IN)
+    await settle_hass(hass)
+    assert hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+
+    cloud.login_tokens = tokens("second-token")
+    await hass.config_entries.options.async_configure(second["flow_id"], SIGN_IN)
+    await settle_hass(hass)
+    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    await cloud.connect()
+    assert entry.runtime_data.cloud.connected
 
 
 async def test_unlink(hass: HomeAssistant, cloud: FakeCloud) -> None:

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Coroutine
 from contextlib import aclosing, suppress
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from combustion_cloud import (
     ApiError,
@@ -48,7 +49,7 @@ For example, the service no longer accepts this client, or a bug in handling its
 """
 
 SNAPSHOT_INTERVAL = 10
-"""Minimum seconds between snapshots, however often the account's preferences change."""
+"""Minimum seconds between snapshots, whatever calls for them."""
 
 PREFERENCES_EVENT = "user_preferences_update"
 """Sent when the account's linked devices may have changed."""
@@ -86,7 +87,7 @@ class CloudManager:
         self.entry = entry
         self.account_id: str = entry.data[CONF_CLOUD][CONF_ACCOUNT_ID]
         self._refresh_token: str = entry.data[CONF_CLOUD][CONF_REFRESH_TOKEN]
-        """The token in use, to tell this session's own renewals from a new sign-in."""
+        """The token to use, to tell the session's own renewals from a new sign-in."""
         self.store = DeviceStore()
         self.connected = False
         """Whether the live stream is connected."""
@@ -109,7 +110,7 @@ class CloudManager:
 
     @callback
     def async_entry_updated(self) -> None:
-        """Reconnect if the user has signed in again."""
+        """Replace the session if the user has signed in again."""
         token = self.entry.data[CONF_CLOUD][CONF_REFRESH_TOKEN]
         if token != self._refresh_token:
             self._refresh_token = token
@@ -121,7 +122,7 @@ class CloudManager:
             self._new_credentials.clear()
             delay: float | None = INITIAL_RETRY_DELAY
             try:
-                await self._async_session()
+                await self._async_session_until_replaced()
             except AuthenticationError as err:
                 self._async_failed(str(err), logging.WARNING)
                 self.entry.async_start_reauth(self.hass)
@@ -142,41 +143,44 @@ class CloudManager:
 
     def _next_delay(self, err: CombustionCloudError) -> float:
         """Return the seconds to wait before a new session."""
-        if (
-            isinstance(err, ApiError)
-            and not isinstance(err, RateLimitError)
-            and err.status < 500
-            and err.status not in RETRYABLE_STATUSES
-        ):
+        if _is_refusal(err):
             return REFUSED_RETRY_DELAY
         delay = self._retry_delay
         self._retry_delay = min(delay * 2, MAX_RETRY_DELAY)
         return _respect_rate_limit(err, delay)
 
+    async def _async_session_until_replaced(self) -> None:
+        """Run a session until it fails, or the user signs in again."""
+        try:
+            await _async_until_one_ends(
+                self._async_session(), self._new_credentials.wait()
+            )
+        except Exception:
+            # Why the old session failed no longer matters once there is a new one.
+            if not self._new_credentials.is_set():
+                raise
+
     async def _async_session(self) -> None:
         """Connect and follow the account until something fails."""
         self._snapshot_wanted.clear()
+        token = self._refresh_token
+
+        @callback
+        def async_renewed(tokens: AuthTokens) -> None:
+            nonlocal token
+            if self._async_save_tokens(tokens, replacing=token):
+                token = tokens.refresh_token
+
         client = CombustionCloudClient(
-            async_get_clientsession(self.hass),
-            on_token_update=self._async_save_tokens,
+            async_get_clientsession(self.hass), on_token_update=async_renewed
         )
         try:
-            await client.resume(self._refresh_token)
+            await client.resume(token)
             # The stream never waits for a snapshot, so a slow or failing one doesn't delay
             # live readings.
-            tasks = [
-                asyncio.create_task(self._async_stream(client)),
-                asyncio.create_task(self._async_take_snapshots(client)),
-            ]
-            try:
-                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for task in tasks:
-                    task.cancel()
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    raise result
+            await _async_until_one_ends(
+                self._async_stream(client), self._async_take_snapshots(client)
+            )
         finally:
             self.connected = False
             await client.close()
@@ -202,26 +206,43 @@ class CloudManager:
                 self._snapshot_wanted.set()
 
     async def _async_take_snapshots(self, client: CombustionCloudClient) -> None:
-        """Read every linked device when the stream connects or the linked devices change."""
+        """Read every linked device when the stream connects or the linked devices change.
+
+        Also retries, as a failed read of the account or of any device would otherwise leave
+        devices missing until then.
+        """
         delay = INITIAL_RETRY_DELAY
+        retry_in: float | None = None
         while True:
-            await self._snapshot_wanted.wait()
+            # A reason to read now needn't wait for the next retry.
+            with suppress(TimeoutError):
+                async with asyncio.timeout(retry_in):
+                    await self._snapshot_wanted.wait()
             self._snapshot_wanted.clear()
+            failures: list[CombustionCloudError]
             try:
                 snapshot = await client.get_snapshot()
             except (ApiError, CloudConnectionError, ProtocolError) as err:
+                failures = [err]
+            else:
+                self._async_apply_snapshot(snapshot)
+                failures = [
+                    err for err in snapshot.errors.values() if _is_transient(err)
+                ]
+            pause: float = SNAPSHOT_INTERVAL
+            if failures:
                 LOGGER.debug(
-                    "Reading MeatNet Cloud devices failed: %s: %s",
-                    type(err).__name__,
-                    err,
+                    "Reading MeatNet Cloud devices failed: %s",
+                    ", ".join(f"{type(err).__name__}: {err}" for err in failures),
                 )
-                self._snapshot_wanted.set()
-                await asyncio.sleep(_respect_rate_limit(err, delay))
+                for err in failures:
+                    pause = _respect_rate_limit(err, pause)
+                retry_in = max(delay - pause, 0)
                 delay = min(delay * 2, MAX_RETRY_DELAY)
-                continue
-            delay = INITIAL_RETRY_DELAY
-            self._async_apply_snapshot(snapshot)
-            await asyncio.sleep(SNAPSHOT_INTERVAL)
+            else:
+                retry_in = None
+                delay = INITIAL_RETRY_DELAY
+            await asyncio.sleep(pause)
 
     @callback
     def _async_apply_snapshot(self, snapshot: Snapshot) -> None:
@@ -235,11 +256,18 @@ class CloudManager:
                 self.store.remove(identity)
 
     @callback
-    def _async_save_tokens(self, tokens: AuthTokens) -> None:
-        """Store a renewed session, unless the account has since been unlinked or changed."""
+    def _async_save_tokens(self, tokens: AuthTokens, *, replacing: str) -> bool:
+        """Store a renewed session, and return whether it was still the one in use.
+
+        The account may since have been unlinked or changed, or the user may have signed in again.
+        """
         cloud = self.entry.data.get(CONF_CLOUD)
-        if cloud is None or cloud[CONF_ACCOUNT_ID] != tokens.uid:
-            return
+        if (
+            cloud is None
+            or cloud[CONF_ACCOUNT_ID] != tokens.uid
+            or cloud[CONF_REFRESH_TOKEN] != replacing
+        ):
+            return False
         self._refresh_token = tokens.refresh_token
         # Renewals happen about hourly and usually keep the token. Unchanged data isn't saved.
         self.hass.config_entries.async_update_entry(
@@ -249,6 +277,7 @@ class CloudManager:
                 CONF_CLOUD: {**cloud, CONF_REFRESH_TOKEN: tokens.refresh_token},
             },
         )
+        return True
 
     @callback
     def _async_connected(self) -> None:
@@ -267,6 +296,38 @@ class CloudManager:
         if level > self._logged_level:
             self._logged_level = level
             LOGGER.log(level, "MeatNet Cloud is unavailable: %s", reason)
+
+
+async def _async_until_one_ends(*coroutines: Coroutine[Any, Any, object]) -> None:
+    """Run these until one ends, then stop the others. Raises if any failed."""
+    tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, Exception):
+            raise result
+
+
+def _is_refusal(err: CombustionCloudError) -> bool:
+    """Whether the service refused in a way that retrying soon is unlikely to change."""
+    return (
+        isinstance(err, ApiError)
+        and not isinstance(err, RateLimitError)
+        and err.status < 500
+        and err.status not in RETRYABLE_STATUSES
+    )
+
+
+def _is_transient(err: CombustionCloudError) -> bool:
+    """Whether a device that couldn't be read is worth retrying before the next connection.
+
+    An unreadable response is more likely from a device this client doesn't support.
+    """
+    return not isinstance(err, ProtocolError) and not _is_refusal(err)
 
 
 def _respect_rate_limit(err: CombustionCloudError, delay: float) -> float:

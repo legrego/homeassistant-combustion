@@ -35,6 +35,7 @@ ACCOUNT_ID = "synthetic-account"
 REFRESH_TOKEN = "synthetic-refresh-token"
 PROBE_IDENTITY = DeviceIdentity.probe(0x10001CCC)
 OTHER_IDENTITY = DeviceIdentity.probe(0x0C0FFEE1)
+THIRD_IDENTITY = DeviceIdentity.probe(0x0C0FFEE2)
 
 CLOUD_DATA = {
     CONF_CLOUD: {
@@ -153,6 +154,8 @@ class FakeCloud:
         self.login_tokens = tokens()
         self.on_login: Callable[[], object] = lambda: None
         """Called while a sign-in is in progress."""
+        self.on_close: Callable[[], object] = lambda: None
+        """Called while a client is being closed."""
         self.failures: dict[str, list[Exception]] = {
             "login": [],
             "resume": [],
@@ -229,6 +232,7 @@ class FakeClient:
     async def close(self) -> None:
         """Close the client."""
         self.closed = True
+        self.cloud.on_close()
 
 
 async def settle() -> None:
@@ -253,6 +257,8 @@ class FakeService:
         self.token_requests: list[str] = []
         self.sockets: list[web.WebSocketResponse] = []
         self.live = asyncio.Event()
+        self.status_failures: list[int] = []
+        """HTTP statuses to answer upcoming reads of a device with."""
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         """Answer a request."""
@@ -289,5 +295,7 @@ class FakeService:
                 pass
             return socket
         if request.path.endswith("/status"):
+            if self.status_failures:
+                return web.Response(status=self.status_failures.pop(0))
             return web.json_response(status_data())
         return web.json_response(account_data(PROBE_IDENTITY))

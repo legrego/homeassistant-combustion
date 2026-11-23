@@ -15,6 +15,7 @@ from combustion_cloud import (
 )
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.config_entries import (
+    SOURCE_REAUTH,
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
@@ -204,7 +205,12 @@ class CombustionOptionsFlow(OptionsFlow):
         if user_input is not None:
             account, error = await _async_try_sign_in(self.hass, user_input)
             if account is not None:
-                self._async_update_data({**self.config_entry.data, CONF_CLOUD: account})
+                entry = self.config_entry
+                self._async_update_data({**entry.data, CONF_CLOUD: account})
+                # Only needed if another dialog had linked the same account, as the entry isn't
+                # reloaded then.
+                for flow in entry.async_get_active_flows(self.hass, {SOURCE_REAUTH}):
+                    self.hass.config_entries.flow.async_abort(flow["flow_id"])
                 return self.async_abort(reason="cloud_linked")
             errors["base"] = error or "unknown"
         return self.async_show_form(
@@ -234,6 +240,7 @@ class CombustionOptionsFlow(OptionsFlow):
     def _async_update_data(self, data: Mapping[str, Any]) -> None:
         """Change the linked account.
 
-        The update listener reloads the entry, which also withdraws any request to sign in again.
+        If a different account, or none, is now linked, the update listener reloads the entry,
+        which also withdraws any request to sign in again.
         """
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)

@@ -45,6 +45,7 @@ from tests.utils.cloud_utils import (
     PASSWORD,
     PROBE_IDENTITY,
     REFRESH_TOKEN,
+    THIRD_IDENTITY,
     FakeCloud,
     FakeService,
     settle,
@@ -88,6 +89,13 @@ def reauth_flows(hass: HomeAssistant) -> list:
 def core_temperature(manager: CloudManager, identity=PROBE_IDENTITY) -> float | None:
     """Return the core temperature last reported for a probe."""
     return manager.store.devices[identity].virtual_temperature("core")
+
+
+async def eventually(condition) -> None:
+    """Wait for something that takes time."""
+    async with asyncio.timeout(5):
+        while not condition():
+            await asyncio.sleep(0.01)
 
 
 async def assert_bluetooth_works(hass: HomeAssistant, entry, reading: float) -> None:
@@ -222,7 +230,10 @@ async def test_stream_continues_while_snapshots_fail(
 ) -> None:
     """A failing snapshot is retried without interrupting live updates."""
     cloud.failures["get_snapshot"] = [CloudConnectionError("Interrupted")]
-    with patch(f"{MODULE}.INITIAL_RETRY_DELAY", 0.05):
+    with (
+        patch(f"{MODULE}.INITIAL_RETRY_DELAY", 0.05),
+        patch(f"{MODULE}.SNAPSHOT_INTERVAL", 0),
+    ):
         entry = await setup_cloud(hass)
         await cloud.connect()
         await cloud.send(status_event(temperature=50.0))
@@ -234,6 +245,153 @@ async def test_stream_continues_while_snapshots_fail(
     assert cloud.snapshots == 2
     assert manager.snapshot is cloud.snapshot
     assert len(cloud.clients) == 1
+
+
+TRANSIENT = [
+    ApiError(503),
+    ApiError(408),
+    RateLimitError(0),
+    RateLimitError(None, status=400),
+    CloudConnectionError("Interrupted"),
+]
+LASTING = [ApiError(404), PermissionDeniedError(403), ProtocolError("Unreadable")]
+
+
+def describe(err: Exception) -> str:
+    """Name a test for an error."""
+    return f"{type(err).__name__}-{getattr(err, 'status', '')}"
+
+
+@pytest.mark.parametrize("failure", TRANSIENT, ids=describe)
+async def test_unread_devices_are_retried(
+    hass: HomeAssistant, cloud: FakeCloud, failure: Exception
+) -> None:
+    """A device that couldn't be read is retried until it can, keeping the others' readings."""
+    # Errors that retrying won't fix don't stop the others from being retried.
+    cloud.snapshot = snapshot(
+        status_data(),
+        errors={OTHER_IDENTITY: failure, THIRD_IDENTITY: ApiError(404)},
+    )
+    with (
+        patch(f"{MODULE}.INITIAL_RETRY_DELAY", 0.05),
+        patch(f"{MODULE}.SNAPSHOT_INTERVAL", 0),
+    ):
+        entry = await setup_cloud(hass)
+        await cloud.connect()
+        manager = entry.runtime_data.cloud
+        assert cloud.snapshots == 1
+        assert core_temperature(manager) == 20
+        assert OTHER_IDENTITY in manager.snapshot.errors
+
+        # Another device failing the next time doesn't lose what was read.
+        cloud.snapshot = snapshot(
+            status_data(OTHER_IDENTITY, temperature=30.0),
+            errors={PROBE_IDENTITY: failure},
+        )
+        await eventually(lambda: cloud.snapshots == 2)
+        await settle()
+        assert core_temperature(manager) == 20
+        assert core_temperature(manager, OTHER_IDENTITY) == 30
+
+        cloud.snapshot = snapshot(
+            status_data(temperature=25.0), status_data(OTHER_IDENTITY)
+        )
+        await eventually(lambda: cloud.snapshots == 3)
+        await asyncio.sleep(0.3)
+    assert cloud.snapshots == 3
+    assert core_temperature(manager) == 25
+    assert manager.connected
+    assert len(cloud.clients) == 1
+
+
+@pytest.mark.parametrize("failure", LASTING, ids=describe)
+@pytest.mark.usefixtures("no_delays")
+async def test_unreadable_devices_are_not_retried(
+    hass: HomeAssistant, cloud: FakeCloud, failure: Exception
+) -> None:
+    """A device that retrying won't make readable waits for the next connection."""
+    cloud.snapshot = snapshot(status_data(), errors={OTHER_IDENTITY: failure})
+    await setup_cloud(hass)
+    await cloud.connect()
+    await asyncio.sleep(0.1)
+    assert cloud.snapshots == 1
+    await cloud.connect()
+    assert cloud.snapshots == 2
+
+
+async def test_unread_devices_back_off(hass: HomeAssistant, cloud: FakeCloud) -> None:
+    """Retries become less frequent, up to a limit."""
+    cloud.snapshot = snapshot(
+        status_data(),
+        errors={OTHER_IDENTITY: ApiError(503), THIRD_IDENTITY: ApiError(503)},
+    )
+    with (
+        patch(f"{MODULE}.INITIAL_RETRY_DELAY", 0.01),
+        patch(f"{MODULE}.SNAPSHOT_INTERVAL", 0),
+    ):
+        await setup_cloud(hass)
+        await cloud.connect()
+        await asyncio.sleep(0.5)
+        assert 3 <= cloud.snapshots <= 7  # About 50 without backing off.
+
+        # Reading everything starts the backoff afresh.
+        failing, cloud.snapshot = cloud.snapshot, snapshot(status_data())
+        await cloud.connect()
+        cloud.snapshot = failing
+        before = cloud.snapshots
+        await cloud.connect()
+        await asyncio.sleep(0.3)
+        assert cloud.snapshots >= before + 3
+
+        with patch(f"{MODULE}.MAX_RETRY_DELAY", 0.01):
+            before = cloud.snapshots
+            await cloud.send(CloudEvent.from_data({"type": "user_preferences_update"}))
+            await eventually(lambda: cloud.snapshots > before + 10)
+
+
+@pytest.mark.parametrize("failed", ["account", "device"])
+@pytest.mark.parametrize(
+    ("failure", "waits"),
+    [(ApiError(503), False), (RateLimitError(60), True)],
+    ids=["outage", "rate limit"],
+)
+async def test_waiting_to_retry(
+    hass: HomeAssistant, cloud: FakeCloud, failed: str, failure: Exception, waits: bool
+) -> None:
+    """A new connection doesn't wait for the next retry, unless the service said to wait."""
+    if failed == "account":
+        cloud.failures["get_snapshot"] = [failure]
+    else:
+        cloud.snapshot = snapshot(status_data(), errors={OTHER_IDENTITY: failure})
+    with (
+        patch(f"{MODULE}.INITIAL_RETRY_DELAY", 60),
+        patch(f"{MODULE}.SNAPSHOT_INTERVAL", 0),
+    ):
+        await setup_cloud(hass)
+        await cloud.connect()
+        assert cloud.snapshots == 1
+        await cloud.connect()
+        await asyncio.sleep(0.05)
+        assert cloud.snapshots == (1 if waits else 2)
+
+
+async def test_longest_rate_limit(hass: HomeAssistant, cloud: FakeCloud) -> None:
+    """The longest requested wait applies, however many devices were refused."""
+    cloud.snapshot = snapshot(
+        errors={
+            PROBE_IDENTITY: RateLimitError(60),
+            OTHER_IDENTITY: RateLimitError(0),
+            THIRD_IDENTITY: ApiError(503),
+        }
+    )
+    with (
+        patch(f"{MODULE}.INITIAL_RETRY_DELAY", 0.01),
+        patch(f"{MODULE}.SNAPSHOT_INTERVAL", 0),
+    ):
+        await setup_cloud(hass)
+        await cloud.connect()
+        await asyncio.sleep(0.1)
+    assert cloud.snapshots == 1
 
 
 async def test_stream_ending_quietly_reconnects(
@@ -348,6 +506,108 @@ async def test_renewal_after_unlinking(hass: HomeAssistant, cloud: FakeCloud) ->
     assert cloud.clients[0].closed
 
 
+def sign_in_elsewhere(hass: HomeAssistant, entry, token: str = "second-token") -> None:
+    """Replace the linked account's session, as signing in to it again does."""
+    hass.config_entries.async_update_entry(
+        entry,
+        data={CONF_CLOUD: {**entry.data[CONF_CLOUD], CONF_REFRESH_TOKEN: token}},
+    )
+
+
+def stored_token(entry) -> str:
+    """Return the session that a restart would resume."""
+    return entry.data[CONF_CLOUD][CONF_REFRESH_TOKEN]
+
+
+async def test_signing_in_replaces_session(
+    hass: HomeAssistant, cloud: FakeCloud
+) -> None:
+    """Signing in again while connected reconnects with the new session, and only that."""
+    entry = await setup_cloud(hass)
+    await cloud.connect()
+    coordinator = entry.runtime_data
+    renew = cloud.clients[0].on_token_update
+
+    sign_in_elsewhere(hass, entry)
+    renew(tokens("too-late"))  # Before the old session has been stopped.
+    assert stored_token(entry) == "second-token"
+    await settle_hass(hass)
+    assert cloud.resumed == [REFRESH_TOKEN, "second-token"]
+    assert [client.closed for client in cloud.clients] == [True, False]
+    renew(tokens("too-late"))
+    assert stored_token(entry) == "second-token"
+
+    await cloud.connect()
+    assert coordinator.cloud.connected
+    assert coordinator.cloud.last_error is None
+    assert core_temperature(coordinator.cloud) == 20
+    assert entry.runtime_data is coordinator
+    await assert_bluetooth_works(hass, entry, 30)
+
+    # The new session's own renewals are still saved, and don't reconnect.
+    cloud.clients[1].on_token_update(tokens("second-renewed"))
+    cloud.clients[1].on_token_update(tokens("second-renewed-again"))
+    await settle_hass(hass)
+    assert stored_token(entry) == "second-renewed-again"
+    assert len(cloud.clients) == 2
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert all(client.closed for client in cloud.clients)
+
+
+async def test_signing_in_before_listener(
+    hass: HomeAssistant, cloud: FakeCloud
+) -> None:
+    """A renewal can't replace a session that was stored but not yet noticed."""
+    entry = await setup_cloud(hass)
+    with patch.object(CloudManager, "async_entry_updated"):
+        sign_in_elsewhere(hass, entry)
+        cloud.clients[0].on_token_update(tokens("too-late"))
+        await settle_hass(hass)
+    assert stored_token(entry) == "second-token"
+    entry.runtime_data.cloud.async_entry_updated()
+    await settle()
+    assert cloud.resumed == [REFRESH_TOKEN, "second-token"]
+
+
+async def test_signing_in_while_resuming(hass: HomeAssistant, cloud: FakeCloud) -> None:
+    """A session that is still being resumed is replaced too."""
+    cloud.resume_gate.clear()
+    entry = await setup_cloud(hass)
+    sign_in_elsewhere(hass, entry)
+    await settle()
+    assert cloud.resumed == [REFRESH_TOKEN, "second-token"]
+    assert [client.closed for client in cloud.clients] == [True, False]
+    cloud.resume_gate.set()
+    await cloud.connect()
+    assert entry.runtime_data.cloud.connected
+
+
+@pytest.mark.parametrize("failure", FAILURES, ids=lambda err: type(err).__name__)
+@pytest.mark.parametrize("failing", [False, True], ids=["before", "while failing"])
+async def test_replaced_session_failing(
+    hass: HomeAssistant,
+    cloud: FakeCloud,
+    caplog: pytest.LogCaptureFixture,
+    failing: bool,
+    failure: Exception,
+) -> None:
+    """A replaced session's failure neither asks to sign in again nor delays the new session."""
+    entry = await setup_cloud(hass)
+    await cloud.connect()
+    cloud.events.put_nowait(failure)
+    if failing:
+        cloud.on_close = lambda: sign_in_elsewhere(hass, entry)
+    else:
+        sign_in_elsewhere(hass, entry)
+    await settle_hass(hass)
+    assert cloud.resumed == [REFRESH_TOKEN, "second-token"]
+    assert not reauth_flows(hass)
+    assert entry.runtime_data.cloud.last_error is None
+    assert "MeatNet Cloud is unavailable" not in caplog.text
+    await cloud.connect()
+    assert entry.runtime_data.cloud.connected
+
+
 async def test_reauth(hass: HomeAssistant, cloud: FakeCloud) -> None:
     """Signing in again reconnects the cloud without reloading the entry."""
     cloud.failures["resume"] = [AuthenticationError("Rejected")]
@@ -397,13 +657,6 @@ async def service(socket_enabled) -> AsyncGenerator[FakeService]:
         await runner.cleanup()
 
 
-async def eventually(condition) -> None:
-    """Wait for something the real client does."""
-    async with asyncio.timeout(5):
-        while not condition():
-            await asyncio.sleep(0.01)
-
-
 async def test_real_client(hass: HomeAssistant, service: FakeService) -> None:
     """The published client connects through Home Assistant's shared session."""
     entry = await setup_entry(hass, data=CLOUD_DATA)
@@ -440,4 +693,39 @@ async def test_real_client_reauth(hass: HomeAssistant, service: FakeService) -> 
     manager = entry.runtime_data.cloud
     await eventually(lambda: manager.connected)
     assert service.token_requests == [REFRESH_TOKEN, "second-token"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_real_client_replaced(hass: HomeAssistant, service: FakeService) -> None:
+    """Signing in again replaces the live connection."""
+    entry = await setup_entry(hass, data=CLOUD_DATA)
+    manager = entry.runtime_data.cloud
+    await eventually(lambda: manager.snapshot is not None)
+
+    sign_in_elsewhere(hass, entry)
+    await eventually(lambda: len(service.sockets) == 2 and manager.connected)
+    assert service.token_requests == [REFRESH_TOKEN, "second-token"]
+    await eventually(lambda: service.sockets[0].closed)
+    assert not service.sockets[1].closed
+    assert stored_token(entry) == "renewed-second-token"
+    assert entry.runtime_data.cloud is manager
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await eventually(lambda: service.sockets[1].closed)
+
+
+async def test_real_client_retries_devices(
+    hass: HomeAssistant, service: FakeService
+) -> None:
+    """A device the service couldn't report is read again without reconnecting."""
+    service.status_failures = [503]
+    with (
+        patch(f"{MODULE}.INITIAL_RETRY_DELAY", 0.05),
+        patch(f"{MODULE}.SNAPSHOT_INTERVAL", 0),
+    ):
+        entry = await setup_entry(hass, data=CLOUD_DATA)
+        manager = entry.runtime_data.cloud
+        await eventually(lambda: manager.store.devices)
+    assert core_temperature(manager) == 20
+    assert not manager.snapshot.errors
+    assert len(service.sockets) == 1
     assert await hass.config_entries.async_unload(entry.entry_id)
