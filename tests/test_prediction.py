@@ -306,6 +306,10 @@ async def test_options(hass):
     """The options flow stores the connection choice and defaults it to off."""
     entry = await setup_entry(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "predictions"}
+    )
     assert result["type"] is FlowResultType.FORM
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], user_input={CONF_ENABLE_PREDICTIONS: True}

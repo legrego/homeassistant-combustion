@@ -59,7 +59,7 @@ pipx install poetry
 poetry install
 ```
 
-The Home Assistant version in `pyproject.toml` must match the `homeassistant` key in `hacs.json`, and the `combustion_ble` version must match `requirements` in `custom_components/combustion/manifest.json`.
+The Home Assistant version in `pyproject.toml` must match the `homeassistant` key in `hacs.json`, and the `combustion_ble` and `combustion_cloud` versions must match `requirements` in `custom_components/combustion/manifest.json`.
 
 Renovate groups Home Assistant and `pytest-homeassistant-custom-component` updates
 behind Dependency Dashboard approval. The test harness must target exactly the

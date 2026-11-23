@@ -4,11 +4,28 @@
         "step": {
             "confirm": {
                 "description": "Do you want to set up {name}? Every Combustion Predictive Thermometer and Giant Grill Gauge in Bluetooth range will be added, whether heard directly or through a MeatNet repeater."
+            },
+            "reauth_confirm": {
+                "title": "Sign in to MeatNet Cloud",
+                "description": "MeatNet Cloud no longer accepts the saved session. Sign in to the linked account again. Bluetooth keeps working in the meantime. Your password is only used to sign in and isn't saved.",
+                "data": {
+                    "email": "Email",
+                    "password": "Password"
+                }
             }
         },
         "abort": {
             "already_configured": "Combustion is already set up.",
-            "not_supported": "This Combustion device is not supported."
+            "not_supported": "This Combustion device is not supported.",
+            "cloud_unlinked": "The MeatNet Cloud account is no longer linked."
+        },
+        "error": {
+            "invalid_auth": "Email or password not accepted. Use your Combustion app account, which is separate from a Combustion store account.",
+            "rate_limited": "Too many attempts. Wait a few minutes, then try again.",
+            "cannot_connect": "Couldn't reach MeatNet Cloud. Check your internet connection and try again.",
+            "service_error": "MeatNet Cloud gave a response this integration doesn't understand. Combustion may have changed the service.",
+            "unknown": "Unexpected error. See the logs for details.",
+            "wrong_account": "That is a different account. Sign in to the linked one, or unlink it in the integration's options first."
         }
     },
     "entity": {
@@ -164,11 +181,43 @@
     "options": {
         "step": {
             "init": {
+                "title": "Combustion options",
+                "menu_options": {
+                    "predictions": "Cooking predictions and SafeCook",
+                    "link_cloud": "Link a MeatNet Cloud account",
+                    "unlink_cloud": "Unlink the MeatNet Cloud account"
+                }
+            },
+            "predictions": {
+                "title": "Cooking predictions and SafeCook",
                 "description": "Read cooking predictions and SafeCook food safety over Bluetooth. Requires an adapter or proxy that supports connections. When a MeatNet repeater (Booster, Display, Giant Grill Gauge, or Engine) is in range, one connection to it covers every probe; otherwise each probe is connected directly, using one of its three connection slots. Cooking targets and SafeCook programs can then be set from Home Assistant.",
                 "data": {
                     "enable_predictions": "Enable cooking predictions and SafeCook"
                 }
+            },
+            "link_cloud": {
+                "title": "Link a MeatNet Cloud account",
+                "description": "Experimental. Sign in with the email and password of your Combustion app account, which is separate from a Combustion store account. Google and Apple sign-in aren't supported. Your password is only used to sign in and isn't saved.\n\nMeatNet Cloud is undocumented, so Combustion can change it without notice. Bluetooth works with or without it.",
+                "data": {
+                    "email": "Email",
+                    "password": "Password"
+                }
+            },
+            "unlink_cloud": {
+                "title": "Unlink the MeatNet Cloud account",
+                "description": "Stop using {email} and forget its session? Bluetooth isn't affected."
             }
+        },
+        "error": {
+            "invalid_auth": "Email or password not accepted. Use your Combustion app account, which is separate from a Combustion store account.",
+            "rate_limited": "Too many attempts. Wait a few minutes, then try again.",
+            "cannot_connect": "Couldn't reach MeatNet Cloud. Check your internet connection and try again.",
+            "service_error": "MeatNet Cloud gave a response this integration doesn't understand. Combustion may have changed the service.",
+            "unknown": "Unexpected error. See the logs for details."
+        },
+        "abort": {
+            "cloud_linked": "MeatNet Cloud account linked.",
+            "cloud_unlinked": "MeatNet Cloud account unlinked."
         }
     },
     "services": {

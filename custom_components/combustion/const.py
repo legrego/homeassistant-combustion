@@ -15,6 +15,11 @@ MEATNET_UNIQUE_ID = "combustion_meatnet"
 
 CONF_ENABLE_PREDICTIONS = "enable_predictions"
 
+# The linked MeatNet Cloud account, in the entry's data. Its email is stored alongside these.
+CONF_CLOUD = "cloud"
+CONF_ACCOUNT_ID = "account_id"
+CONF_REFRESH_TOKEN = "refresh_token"
+
 # Seconds without any advertisement, direct or relayed, before a device is unavailable. Devices
 # advertise several times a second, but Home Assistant forwards each address only from the one
 # scanner that owns it and drops copies from every other scanner. A weak or busy owner can pass

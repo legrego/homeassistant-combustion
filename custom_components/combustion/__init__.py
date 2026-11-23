@@ -16,7 +16,8 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_ENABLE_PREDICTIONS, DOMAIN
+from .cloud import CloudManager
+from .const import CONF_ACCOUNT_ID, CONF_CLOUD, CONF_ENABLE_PREDICTIONS, DOMAIN
 from .coordinator import CombustionConfigEntry, CombustionCoordinator
 from .services import async_setup_services
 
@@ -43,13 +44,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: CombustionConfigEntry) -
         hass,
         entry.entry_id,
         enable_predictions=entry.options.get(CONF_ENABLE_PREDICTIONS, False),
+        cloud=CloudManager(hass, entry) if CONF_CLOUD in entry.data else None,
     )
     entry.runtime_data = coordinator
 
     # Platforms subscribe to new devices first, so nothing heard at startup is missed.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(coordinator.async_start())
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
+    if coordinator.cloud is not None:
+        coordinator.cloud.async_start()
     return True
 
 
@@ -61,17 +65,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: CombustionConfigEntry) 
     return True
 
 
-async def _async_options_updated(
+async def _async_entry_updated(
     hass: HomeAssistant, entry: CombustionConfigEntry
 ) -> None:
-    """Reload when prediction connections are enabled or disabled.
+    """Reload when predictions are turned on or off, or a cloud account is linked or unlinked.
 
-    Other entry updates must not reload: Bluetooth discovery of each new Combustion address
-    updates the entry's discovery keys, and a reload would drop every prediction connection.
+    Other entry updates must not reload, which would drop every prediction connection: Bluetooth
+    discovery of each new Combustion address updates the entry's discovery keys, and the cloud
+    session saves its renewed token.
     """
-    enabled = entry.options.get(CONF_ENABLE_PREDICTIONS, False)
-    if enabled != entry.runtime_data.enable_predictions:
+    coordinator = entry.runtime_data
+    cloud = coordinator.cloud
+    account_id = entry.data.get(CONF_CLOUD, {}).get(CONF_ACCOUNT_ID)
+    predictions = entry.options.get(CONF_ENABLE_PREDICTIONS, False)
+    if (predictions, account_id) != (
+        coordinator.enable_predictions,
+        None if cloud is None else cloud.account_id,
+    ):
         await hass.config_entries.async_reload(entry.entry_id)
+    elif cloud is not None:
+        cloud.async_entry_updated()
 
 
 async def async_remove_config_entry_device(

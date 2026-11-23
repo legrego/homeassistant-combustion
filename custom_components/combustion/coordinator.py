@@ -32,6 +32,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_interval
 
+from .cloud import CloudManager
 from .const import DOMAIN, LOGGER, STALE_TIMEOUT
 from .device import (
     CombustionDevice,
@@ -69,11 +70,14 @@ class CombustionCoordinator:
         config_entry_id: str,
         *,
         enable_predictions: bool = False,
+        cloud: CloudManager | None = None,
     ) -> None:
         """Initialize."""
         self.hass = hass
         self.config_entry_id = config_entry_id
         self.enable_predictions = enable_predictions
+        self.cloud = cloud
+        """The linked MeatNet Cloud account, if any."""
         self.predictions: dict[int, PredictionMonitor] = {}
         """Direct probe connections, by probe serial number."""
         self._predictions_stopped = False
