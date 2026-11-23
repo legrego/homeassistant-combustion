@@ -64,7 +64,7 @@ When cooking predictions are on, their connections also read versions. Otherwise
 
 ## Cooking predictions
 
-Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure** and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors and controls](#safecook-food-safety). Disabling the option releases the connections and removes these entities.
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure**, select **Cooking predictions and SafeCook**, and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors and controls](#safecook-food-safety). Disabling the option releases the connections and removes these entities.
 
 This requires a Bluetooth adapter or proxy that supports active connections. Existing passive temperature sensors continue to work without connections.
 
@@ -160,6 +160,7 @@ The script prints raw and decoded status notifications and saves them to a times
 
 - Check that Home Assistant's Bluetooth integration is set up, with an adapter or proxy in range of a probe or a repeater.
 - Take the probe out of its charger.
+- To report a problem, open **Settings > Devices & services > Combustion**, choose **Download diagnostics** from the three-dot menu, and attach the file. It leaves out serial numbers, Bluetooth addresses, and account details.
 - For debug logs, add this to `configuration.yaml`:
 
   ```yaml

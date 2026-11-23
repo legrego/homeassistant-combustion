@@ -16,10 +16,10 @@ rules:
     comment: Shared Bluetooth handling is in coordinator.py, the devices entities read from are in device.py, and the base entity is in entity.py.
   config-flow:
     status: done
-    comment: Manual setup and Bluetooth discovery share a confirmation flow. An options flow enables prediction connections, which also set and cancel cooking targets.
+    comment: Manual setup and Bluetooth discovery share a confirmation flow. An options flow enables prediction connections, which also set and cancel cooking targets, and links an optional MeatNet Cloud account. Only the session's refresh token, email, and account ID are stored.
   config-flow-test-coverage:
     status: done
-    comment: Tests cover setup, discovery, invalid advertisements, and duplicate entries. CI requires 100% line and branch coverage of config_flow.py.
+    comment: Tests cover setup, discovery, invalid advertisements, duplicate entries, linking and unlinking a cloud account, and reauthentication. CI requires 100% line and branch coverage of config_flow.py.
   dependency-transparency:
     status: done
     comment: >-
@@ -30,6 +30,9 @@ rules:
       Source and license: https://github.com/legrego/combustion_ble/tree/v0.10.0.
       Release: https://github.com/legrego/combustion_ble/releases/tag/v0.10.0.
       Package: https://pypi.org/project/combustion-ble/0.10.0/.
+      combustion_cloud is Apache-2.0 licensed and published on PyPI.
+      Source and license: https://github.com/legrego/combustion_cloud/tree/v0.1.0.
+      Package: https://pypi.org/project/combustion-cloud/0.1.0/.
   docs-actions:
     status: done
     comment: README.md documents combustion.configure_safecook and its fields, and explains using the entities in standard automations.
@@ -62,7 +65,7 @@ rules:
     comment: A typed CombustionConfigEntry stores its coordinator in entry.runtime_data.
   test-before-configure:
     status: exempt
-    comment: Devices are discovered at runtime without user-supplied connection details. Discovery advertisements are validated before confirmation. Optional prediction connections are established as direct probes are heard.
+    comment: Devices are discovered at runtime without user-supplied connection details. Discovery advertisements are validated before confirmation. Optional prediction connections are established as direct probes are heard. An optional cloud account is signed in to, and read, before it is linked.
   test-before-setup:
     status: exempt
     comment: There is no device connection or configuration to validate during setup. The integration subscribes to Home Assistant Bluetooth and adds devices as advertisements arrive, including after startup.
@@ -78,14 +81,14 @@ rules:
     status: done
     comment: async_unload_entry unloads both platforms; unload callbacks remove Bluetooth, timer, and platform listeners. Tests cover unloading and reloading with existing and newly discovered devices.
   docs-configuration-parameters:
-    status: exempt
-    comment: There is no options flow. README.md explains that no settings are required.
+    status: todo
+    comment: README.md documents the predictions option. Linking a MeatNet Cloud account is not documented yet.
   docs-installation-parameters:
     status: exempt
     comment: Setup only asks for confirmation, with no input parameters. README.md documents this setup flow.
   entity-unavailable:
     status: done
-    comment: CombustionEntity.available follows MeatNet device availability. Tests verify expiry after 15 seconds and automatic recovery when advertisements resume.
+    comment: CombustionEntity.available follows MeatNet device availability. Tests verify expiry after 2 minutes and automatic recovery when advertisements resume.
   integration-owner:
     status: done
     comment: The manifest lists @legrego as the integration owner.
@@ -96,8 +99,8 @@ rules:
     status: done
     comment: Every platform sets PARALLEL_UPDATES to 0. Read-only entities only update from pushed data; the library matches each command to its response, so commands for several probes can run at once.
   reauthentication-flow:
-    status: exempt
-    comment: Passive Bluetooth advertisements require no authentication or credentials.
+    status: done
+    comment: A rejected MeatNet Cloud session asks the user to sign in again, without affecting Bluetooth. Bluetooth needs no credentials.
   test-coverage:
     status: done
     comment: Tests cover more than 95% of every integration module, including branches. CI enforces this per module and retains 100% coverage for config_flow.py.
@@ -105,7 +108,9 @@ rules:
   # Higher tiers have not been assessed.
   # Gold
   devices: todo
-  diagnostics: todo
+  diagnostics:
+    status: done
+    comment: diagnostics.py describes devices without serial numbers, Bluetooth addresses, or account details. Tests verify that none appear.
   discovery: todo
   discovery-update-info: todo
   docs-data-update: todo
@@ -128,5 +133,7 @@ rules:
 
   # Platinum
   async-dependency: todo
-  inject-websession: todo
+  inject-websession:
+    status: done
+    comment: The cloud client uses Home Assistant's shared session.
   strict-typing: todo

@@ -1,6 +1,6 @@
 """Global fixtures for the Combustion integration."""
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from functools import partial
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +9,7 @@ from bleak.exc import BleakError
 from combustion_ble import MeatNet
 
 from custom_components.combustion import prediction
+from tests.utils.cloud_utils import FakeCloud
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -58,4 +59,12 @@ def clock() -> Generator[FakeClock]:
     with patch(
         "custom_components.combustion.coordinator.MeatNet", partial(MeatNet, clock=fake)
     ):
+        yield fake
+
+
+@pytest.fixture
+async def cloud() -> AsyncGenerator[FakeCloud]:
+    """Give the integration a fake MeatNet Cloud."""
+    fake = FakeCloud()
+    with patch("custom_components.combustion.cloud.CombustionCloudClient", fake.client):
         yield fake
