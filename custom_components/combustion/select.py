@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from combustion_ble import Device, FoodSafeProgram, Probe, Serving
+from combustion_ble import FoodSafeProgram, Serving
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.core import HomeAssistant, callback
@@ -11,6 +11,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import CombustionConfigEntry, CombustionCoordinator
+from .device import CombustionDevice, ProbeDevice
 from .entity import CombustionProbeControl, async_remove_entities
 from .food_safety import (
     PRODUCTS,
@@ -56,8 +57,8 @@ async def async_setup_entry(
         return
 
     @callback
-    def _async_add_device(device: Device) -> None:
-        if isinstance(device, Probe):
+    def _async_add_device(device: CombustionDevice) -> None:
+        if isinstance(device, ProbeDevice):
             async_add_entities(
                 [
                     CombustionProductSelect(coordinator, device),
@@ -71,14 +72,14 @@ async def async_setup_entry(
 class CombustionProductSelect(CombustionProbeControl, SelectEntity):
     """A probe's SafeCook product. Choosing one starts a Simplified program."""
 
-    def __init__(self, coordinator: CombustionCoordinator, probe: Probe) -> None:
+    def __init__(self, coordinator: CombustionCoordinator, probe: ProbeDevice) -> None:
         """Initialize."""
         super().__init__(coordinator, probe, PRODUCT)
 
     @property
     def current_option(self) -> str | None:
         """Return the product the probe reports. Unknown while SafeCook is off."""
-        return current_product(self._device)
+        return current_product(self._device.bluetooth)
 
     async def async_select_option(self, option: str) -> None:
         """Start a program for the product, keeping the current serving.
@@ -98,20 +99,20 @@ class CombustionProductSelect(CombustionProbeControl, SelectEntity):
                 product, SERVINGS.get(serving or "", Serving.SERVED_IMMEDIATELY)
             )
 
-        await self._coordinator.async_change_food_safe(self._device, change)
+        await self._coordinator.async_change_food_safe(self._device.bluetooth, change)
 
 
 class CombustionServingSelect(CombustionProbeControl, SelectEntity):
     """How the food in a probe's SafeCook program will be served."""
 
-    def __init__(self, coordinator: CombustionCoordinator, probe: Probe) -> None:
+    def __init__(self, coordinator: CombustionCoordinator, probe: ProbeDevice) -> None:
         """Initialize."""
         super().__init__(coordinator, probe, SERVING)
 
     @property
     def current_option(self) -> str | None:
         """Return the serving the probe reports. Unknown while SafeCook is off."""
-        return current_serving(self._device)
+        return current_serving(self._device.bluetooth)
 
     async def async_select_option(self, option: str) -> None:
         """Restart the current Simplified program with this serving.
@@ -134,4 +135,4 @@ class CombustionServingSelect(CombustionProbeControl, SelectEntity):
                 )
             return simplified_program(product, SERVINGS[option])
 
-        await self._coordinator.async_change_food_safe(self._device, change)
+        await self._coordinator.async_change_food_safe(self._device.bluetooth, change)

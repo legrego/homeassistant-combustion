@@ -6,13 +6,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from combustion_ble import (
-    Device,
-    FoodSafeState,
-    Gauge,
-    PredictionState,
-    Probe,
-)
 from homeassistant.components.sensor import (
     DOMAIN as SENSOR_DOMAIN,
 )
@@ -33,8 +26,15 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from .coordinator import CombustionConfigEntry
-from .entity import CombustionEntity, async_remove_entities, prediction_active
-from .food_safety import food_safe_value
+from .device import (
+    FOOD_SAFETY_STATUSES,
+    PREDICTION_STATUSES,
+    CombustionDevice,
+    ProbeDevice,
+    ProbeFoodSafety,
+    ProbePrediction,
+)
+from .entity import CombustionEntity, async_remove_entities
 
 # Entities only update from pushed advertisements.
 PARALLEL_UPDATES = 0
@@ -45,7 +45,7 @@ class CombustionSensorEntityDescription(SensorEntityDescription):
     """Describes a Combustion sensor."""
 
     value_fn: Callable[[Any], StateType]
-    thermistor_fn: Callable[[Probe], int] | None = None
+    thermistor_fn: Callable[[ProbeDevice], int] | None = None
     """For virtual sensors: which thermistor (1-8) the reading comes from."""
 
 
@@ -65,18 +65,11 @@ def _temperature(
     )
 
 
-def _thermistor_reading(number: int) -> Callable[[Probe], float | None]:
-    def value(probe: Probe) -> float | None:
-        if probe.temperatures is None:
-            return None
-        return probe.temperatures[number - 1]
+def _thermistor_reading(number: int) -> Callable[[ProbeDevice], float | None]:
+    def value(probe: ProbeDevice) -> float | None:
+        return probe.readings.thermistor(number)
 
     return value
-
-
-def _thermistor_number(sensor: Any) -> int:
-    # Virtual sensor enum members are named after their thermistor, e.g. VirtualSurfaceSensor.T6.
-    return int(sensor.name[1:])
 
 
 _RSSI = CombustionSensorEntityDescription(
@@ -93,21 +86,21 @@ _RSSI = CombustionSensorEntityDescription(
 PROBE_SENSORS: tuple[CombustionSensorEntityDescription, ...] = (
     _temperature(
         "sensor--core",
-        lambda probe: probe.core_temperature,
+        lambda probe: probe.readings.core,
         translation_key="core_temperature",
-        thermistor_fn=lambda probe: _thermistor_number(probe.core_sensor),
+        thermistor_fn=lambda probe: probe.readings.core_thermistor,
     ),
     _temperature(
         "sensor--surface",
-        lambda probe: probe.surface_temperature,
+        lambda probe: probe.readings.surface,
         translation_key="surface_temperature",
-        thermistor_fn=lambda probe: _thermistor_number(probe.surface_sensor),
+        thermistor_fn=lambda probe: probe.readings.surface_thermistor,
     ),
     _temperature(
         "sensor--ambient",
-        lambda probe: probe.ambient_temperature,
+        lambda probe: probe.readings.ambient,
         translation_key="ambient_temperature",
-        thermistor_fn=lambda probe: _thermistor_number(probe.ambient_sensor),
+        thermistor_fn=lambda probe: probe.readings.ambient_thermistor,
     ),
     *(
         _temperature(
@@ -123,7 +116,7 @@ PROBE_SENSORS: tuple[CombustionSensorEntityDescription, ...] = (
     # mode.
     _temperature(
         "instant_read",
-        lambda probe: probe.instant_read_celsius,
+        lambda probe: probe.instant_read,
         translation_key="instant_read_temperature",
         suggested_display_precision=0,
     ),
@@ -152,15 +145,13 @@ async def async_setup_entry(
     async_remove_entities(hass, entry.entry_id, SENSOR_DOMAIN, removed)
 
     @callback
-    def _async_add_device(device: Device) -> None:
-        if isinstance(device, Probe):
+    def _async_add_device(device: CombustionDevice) -> None:
+        if isinstance(device, ProbeDevice):
             descriptions = PROBE_SENSORS
-        elif isinstance(device, Gauge):
-            descriptions = GAUGE_SENSORS
+            if entry.runtime_data.enable_predictions:
+                descriptions += CONNECTED_SENSORS
         else:
-            return
-        if isinstance(device, Probe) and entry.runtime_data.enable_predictions:
-            descriptions += CONNECTED_SENSORS
+            descriptions = GAUGE_SENSORS
         async_add_entities(
             CombustionSensor(device, description) for description in descriptions
         )
@@ -188,13 +179,17 @@ class CombustionSensor(CombustionEntity, SensorEntity):
         return {"thermistor_id": thermistor_fn(self._device)}
 
 
-PREDICTION_STATES = {
-    PredictionState.PROBE_NOT_INSERTED: "probe_not_inserted",
-    PredictionState.PROBE_INSERTED: "probe_inserted",
-    PredictionState.COOKING: "warming",
-    PredictionState.PREDICTING: "predicting",
-    PredictionState.REMOVAL_PREDICTION_DONE: "ready",
-}
+def _prediction_value(
+    fn: Callable[[ProbePrediction], StateType],
+) -> Callable[[ProbeDevice], StateType]:
+    """Read from the probe's prediction. Unknown while nothing reports it."""
+
+    def value(probe: ProbeDevice) -> StateType:
+        prediction = probe.prediction
+        return None if prediction is None else fn(prediction)
+
+    return value
+
 
 PREDICTION_SENSORS = (
     # The cooking target is a number entity.
@@ -204,43 +199,28 @@ PREDICTION_SENSORS = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.SECONDS,
         suggested_display_precision=0,
-        value_fn=lambda probe: (
-            probe.prediction.seconds_remaining if probe.prediction is not None else None
-        ),
+        value_fn=_prediction_value(lambda prediction: prediction.seconds_remaining),
     ),
     CombustionSensorEntityDescription(
         key="prediction_status",
         translation_key="prediction_status",
         device_class=SensorDeviceClass.ENUM,
-        options=["idle", *PREDICTION_STATES.values()],
-        value_fn=lambda probe: (
-            (
-                PREDICTION_STATES.get(probe.prediction.state)
-                if prediction_active(probe)
-                else "idle"
-            )
-            if probe.prediction is not None
-            else None
-        ),
+        options=PREDICTION_STATUSES,
+        value_fn=_prediction_value(lambda prediction: prediction.status),
     ),
 )
 
 
-FOOD_SAFETY_STATES = {
-    FoodSafeState.NOT_SAFE: "not_safe",
-    FoodSafeState.SAFE: "safe",
-    FoodSafeState.SAFETY_IMPOSSIBLE: "safety_impossible",
-}
+def _food_safety_value(
+    fn: Callable[[ProbeFoodSafety], StateType],
+) -> Callable[[ProbeDevice], StateType]:
+    """Read from the probe's SafeCook progress. Unknown while nothing reports it."""
 
+    def value(probe: ProbeDevice) -> StateType:
+        food_safety = probe.food_safety
+        return None if food_safety is None else fn(food_safety)
 
-def _food_safety_state(probe: Probe) -> str | None:
-    if (food_safe := probe.food_safe) is None:
-        return None
-    if not food_safe.program_set:
-        return "off"
-    if isinstance(food_safe.state, FoodSafeState):
-        return FOOD_SAFETY_STATES[food_safe.state]
-    return None
+    return value
 
 
 FOOD_SAFETY_SENSORS = (
@@ -248,14 +228,12 @@ FOOD_SAFETY_SENSORS = (
         key="food_safety",
         translation_key="food_safety",
         device_class=SensorDeviceClass.ENUM,
-        options=["off", *FOOD_SAFETY_STATES.values()],
-        value_fn=_food_safety_state,
+        options=FOOD_SAFETY_STATUSES,
+        value_fn=_food_safety_value(lambda food_safety: food_safety.status),
     ),
     _temperature(
         "food_safety_threshold",
-        # Simplified programs written without a threshold, as Combustion's Android library and
-        # this integration's action do, leave the threshold to the firmware's product rules.
-        food_safe_value(lambda food_safe: food_safe.threshold_temperature or None),
+        _food_safety_value(lambda food_safety: food_safety.threshold_temperature),
         translation_key="food_safety_threshold",
         # Part of the program, not a measurement.
         state_class=None,
@@ -266,22 +244,22 @@ FOOD_SAFETY_SENSORS = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.SECONDS,
         suggested_display_precision=0,
-        value_fn=food_safe_value(lambda food_safe: food_safe.seconds_above_threshold),
+        value_fn=_food_safety_value(
+            lambda food_safety: food_safety.seconds_above_threshold
+        ),
     ),
     CombustionSensorEntityDescription(
         key="food_safety_log_reduction",
         translation_key="food_safety_log_reduction",
         suggested_display_precision=1,
-        value_fn=food_safe_value(
-            lambda food_safe: food_safe.log_reduction, integrated_only=True
-        ),
+        value_fn=_food_safety_value(lambda food_safety: food_safety.log_reduction),
     ),
     CombustionSensorEntityDescription(
         key="food_safety_target_log_reduction",
         translation_key="food_safety_target_log_reduction",
         suggested_display_precision=1,
-        value_fn=food_safe_value(
-            lambda food_safe: food_safe.target_log_reduction, integrated_only=True
+        value_fn=_food_safety_value(
+            lambda food_safety: food_safety.target_log_reduction
         ),
     ),
 )

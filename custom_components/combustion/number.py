@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from combustion_ble import Device, Probe
 from homeassistant.components.number import (
     DOMAIN as NUMBER_DOMAIN,
 )
@@ -17,7 +16,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import CombustionConfigEntry, CombustionCoordinator
-from .entity import CombustionProbeControl, async_remove_entities, prediction_active
+from .device import CombustionDevice, ProbeDevice
+from .entity import CombustionProbeControl, async_remove_entities
 
 # The library matches each command to its response, so commands for several probes can run at once.
 PARALLEL_UPDATES = 0
@@ -51,8 +51,8 @@ async def async_setup_entry(
         return
 
     @callback
-    def _async_add_device(device: Device) -> None:
-        if isinstance(device, Probe):
+    def _async_add_device(device: CombustionDevice) -> None:
+        if isinstance(device, ProbeDevice):
             async_add_entities([CombustionTargetNumber(coordinator, device)])
 
     entry.async_on_unload(coordinator.async_add_device_listener(_async_add_device))
@@ -61,16 +61,15 @@ async def async_setup_entry(
 class CombustionTargetNumber(CombustionProbeControl, NumberEntity):
     """A probe's cooking target. Setting it starts a removal prediction."""
 
-    def __init__(self, coordinator: CombustionCoordinator, probe: Probe) -> None:
+    def __init__(self, coordinator: CombustionCoordinator, probe: ProbeDevice) -> None:
         """Initialize."""
         super().__init__(coordinator, probe, TARGET)
 
     @property
     def native_value(self) -> float | None:
         """Return the target the probe reports. Unknown when no target is set."""
-        if not prediction_active(self._device):
-            return None
-        return self._device.prediction.set_point_temperature
+        prediction = self._device.prediction
+        return None if prediction is None else prediction.target
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the probe's removal target.
@@ -79,4 +78,4 @@ class CombustionTargetNumber(CombustionProbeControl, NumberEntity):
         """
         # Converting from Fahrenheit can land just outside the probe's range.
         celsius = min(max(round(value, 1), MIN_TARGET), MAX_TARGET)
-        await self._coordinator.async_set_prediction(self._device, celsius)
+        await self._coordinator.async_set_prediction(self._device.bluetooth, celsius)

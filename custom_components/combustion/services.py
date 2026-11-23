@@ -12,7 +12,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN, PROBE_MODEL
 from .coordinator import CombustionCoordinator
-from .entity import device_identifier
+from .device import ProbeDevice
 from .food_safety import SERVINGS, SETTABLE_PRODUCTS, simplified_program
 
 SERVICE_CONFIGURE_SAFECOOK = "configure_safecook"
@@ -60,14 +60,14 @@ def _probe_for_device(
     identifiers = {id for domain, id in device.identifiers if domain == DOMAIN}
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         coordinator: CombustionCoordinator = entry.runtime_data
-        for probe in coordinator.meatnet.probes.values():
-            if device_identifier(probe) in identifiers:
+        for known in coordinator.devices.values():
+            if isinstance(known, ProbeDevice) and known.identifier in identifiers:
                 if not coordinator.enable_predictions:
                     raise ServiceValidationError(
                         translation_domain=DOMAIN,
                         translation_key="predictions_disabled",
                     )
-                return coordinator, probe
+                return coordinator, known.bluetooth
     # A probe not heard since Home Assistant started, or with the integration not loaded.
     raise ServiceValidationError(
         translation_domain=DOMAIN,

@@ -33,7 +33,12 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, LOGGER, STALE_TIMEOUT
-from .entity import device_identifier
+from .device import (
+    CombustionDevice,
+    GaugeDevice,
+    ProbeDevice,
+    device_identifier,
+)
 from .food_safety import Program, product_option, serving_option
 from .prediction import NodeCommand, PredictionMonitor, ProbeCommand, RepeaterMonitor
 from .revisions import RevisionScheduler
@@ -77,6 +82,9 @@ class CombustionCoordinator:
             RepeaterMonitor(hass, self.meatnet) if enable_predictions else None
         )
         self.revisions = RevisionScheduler(hass, self.meatnet)
+        self.devices: dict[str, CombustionDevice] = {}
+        """Devices with entities, by device registry identifier."""
+        self._device_listeners: list[Callable[[CombustionDevice], None]] = []
         # Direct connections being released because the repeater reports their probes. A probe
         # gets no new direct connection until its old session has let go of the probe.
         self._retiring: dict[int, PredictionMonitor] = {}
@@ -88,6 +96,7 @@ class CombustionCoordinator:
         self._food_safe_locks: dict[int, asyncio.Lock] = {}
         self.meatnet.add_device_listener(self._async_log_availability)
         self.meatnet.add_device_listener(self._async_track_revisions)
+        self.meatnet.add_device_listener(self._async_add_bluetooth_device)
 
     @callback
     def async_start(self) -> CALLBACK_TYPE:
@@ -120,12 +129,26 @@ class CombustionCoordinator:
 
     @callback
     def async_add_device_listener(
-        self, listener: Callable[[Device], None]
+        self, listener: Callable[[CombustionDevice], None]
     ) -> CALLBACK_TYPE:
         """Call ``listener`` for every known device, then for each device discovered later."""
-        for device in self.meatnet.devices:
+        for device in self.devices.values():
             listener(device)
-        return self.meatnet.add_device_listener(listener)
+        self._device_listeners.append(listener)
+        return lambda: self._device_listeners.remove(listener)
+
+    @callback
+    def _async_add_bluetooth_device(self, heard: Device) -> None:
+        """Add a device heard for the first time. Repeaters have no entities of their own."""
+        if isinstance(heard, Probe):
+            device: CombustionDevice = ProbeDevice(heard)
+        elif isinstance(heard, Gauge):
+            device = GaugeDevice(heard)
+        else:
+            return
+        self.devices[device.identifier] = device
+        for listener in list(self._device_listeners):
+            listener(device)
 
     @callback
     def _async_log_availability(self, device: Device) -> None:
