@@ -16,7 +16,8 @@ lint = ["ruff==0.17.6"]
 dev = [
     # Keep in step with the homeassistant key in hacs.json.
     "homeassistant==2026.10.4",
-    "colorlog==6.12.0",
+    # Required by check_config in Home Assistant 2026.10.4.
+    "colorlog==6.10.1",
 ]
 test = [
     # Pins the same Home Assistant version as the dev group.

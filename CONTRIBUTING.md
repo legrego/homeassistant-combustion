@@ -65,8 +65,11 @@ Renovate groups Home Assistant and `pytest-homeassistant-custom-component` updat
 behind Dependency Dashboard approval. The test harness must target exactly the
 pinned Home Assistant release. When updating Home Assistant, also copy the
 requirements from that release's `bluetooth_adapters`, `bluetooth`, and `usb`
-integration manifests into the test dependency group, then run `poetry lock` and
-`poetry install`. Renovate does not update those dependencies independently.
+integration manifests into the test dependency group, and those from its
+`scripts/check_config.py` into the dev group. Remove any test dependencies that the
+manifests no longer require, then run `poetry lock` and `poetry install`. List all of
+these dependencies in the disabled rule in `renovate.json`, so that Renovate does not
+update them independently.
 
 Python updates stay within 3.14. Coordinate a future Python minor upgrade across
 `pyproject.toml`, both CI workflows, `.devcontainer/Dockerfile`, `.ruff.toml`, and

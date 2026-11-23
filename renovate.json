@@ -14,7 +14,7 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "These test dependencies must match the pinned Home Assistant integration manifests. Update them with Home Assistant.",
+      "description": "These dependencies must match what the pinned Home Assistant requires. Update them with Home Assistant.",
       "matchPackageNames": [
         "aiousbwatcher",
         "bleak",
@@ -22,6 +22,7 @@
         "bluetooth-adapters",
         "bluetooth-auto-recovery",
         "bluetooth-data-tools",
+        "colorlog",
         "dbus-fast",
         "habluetooth",
         "serialx"
