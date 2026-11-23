@@ -55,6 +55,8 @@ jobs:
           cache: "poetry"
       - name: Install requirements
         run: poetry install
+      - name: Check Home Assistant dependency compatibility
+        run: poetry run python scripts/check_ha_dependencies.py
       - name: Check that Home Assistant can install the manifest requirements
         # Home Assistant installs requirements with uv, under the versions it pins.
         run: |
