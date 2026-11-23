@@ -5,37 +5,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from combustion_ble import Gauge, PredictionMode, Probe
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
-from .const import DOMAIN, GAUGE_MODEL, MANUFACTURER, PROBE_MODEL
+from .const import DOMAIN, MANUFACTURER
+from .device import CombustionDevice, ProbeDevice
 
 if TYPE_CHECKING:
     from .coordinator import CombustionCoordinator
-
-type CombustionDevice = Probe | Gauge
-
-
-def device_identifier(device: CombustionDevice) -> str:
-    """Return the device registry identifier for a device, which prefixes its entities' unique IDs.
-
-    Probes use their serial number in lowercase hex without leading zeros, as earlier versions of
-    this integration did, so existing entities keep their history.
-    """
-    if isinstance(device, Probe):
-        return f"{device.serial_number:x}"
-    return device.serial_number
-
-
-def prediction_active(probe: Probe) -> bool:
-    """Whether the probe has a supported cooking target."""
-    return probe.prediction is not None and probe.prediction.mode in (
-        PredictionMode.TIME_TO_REMOVAL,
-        PredictionMode.REMOVAL_AND_RESTING,
-    )
 
 
 @callback
@@ -63,21 +42,13 @@ class CombustionEntity(Entity):
         self._device = device
         self.entity_description = description
 
-        identifier = device_identifier(device)
-        if isinstance(device, Probe):
-            model = PROBE_MODEL
-            serial_number = device.serial_number_string
-        else:
-            model = GAUGE_MODEL
-            serial_number = device.serial_number
-
-        self._attr_unique_id = f"{identifier}--{description.key}"
+        self._attr_unique_id = f"{device.identifier}--{description.key}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, identifier)},
+            identifiers={(DOMAIN, device.identifier)},
             manufacturer=MANUFACTURER,
-            model=model,
-            name=f"{model} {serial_number}",
-            serial_number=serial_number,
+            model=device.model,
+            name=f"{device.model} {device.serial_number}",
+            serial_number=device.serial_number,
         )
         # No sw_version or hw_version: they are read later, through a prediction connection, and
         # the coordinator records them in the device registry, which keeps the last ones read.
@@ -90,18 +61,18 @@ class CombustionEntity(Entity):
     async def async_added_to_hass(self) -> None:
         """Follow changes to the device."""
         await super().async_added_to_hass()
-        self.async_on_remove(self._device.add_listener(self.async_write_ha_state))
+        self.async_on_remove(self._device.async_add_listener(self.async_write_ha_state))
 
 
 class CombustionProbeControl(CombustionEntity):
     """A control that sends commands to a probe through a prediction connection."""
 
-    _device: Probe
+    _device: ProbeDevice
 
     def __init__(
         self,
         coordinator: CombustionCoordinator,
-        probe: Probe,
+        probe: ProbeDevice,
         description: EntityDescription,
     ) -> None:
         """Initialize."""
@@ -112,7 +83,9 @@ class CombustionProbeControl(CombustionEntity):
     @property
     def available(self) -> bool:
         """Whether a running connection can reach the probe."""
-        return super().available and self._coordinator.can_command(self._device)
+        return super().available and self._coordinator.can_command(
+            self._device.bluetooth
+        )
 
     @callback
     def async_write_ha_state(self) -> None:

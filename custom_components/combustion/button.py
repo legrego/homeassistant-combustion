@@ -6,13 +6,14 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-from combustion_ble import Device, Probe
+from combustion_ble import Probe
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import CombustionConfigEntry, CombustionCoordinator
+from .device import CombustionDevice, ProbeDevice
 from .entity import CombustionProbeControl, async_remove_entities
 
 # The library matches each command to its response, so commands for several probes can run at once.
@@ -63,8 +64,8 @@ async def async_setup_entry(
         return
 
     @callback
-    def _async_add_device(device: Device) -> None:
-        if isinstance(device, Probe):
+    def _async_add_device(device: CombustionDevice) -> None:
+        if isinstance(device, ProbeDevice):
             async_add_entities(
                 CombustionProbeButton(coordinator, device, description)
                 for description in BUTTONS
@@ -81,7 +82,7 @@ class CombustionProbeButton(CombustionProbeControl, ButtonEntity):
     def __init__(
         self,
         coordinator: CombustionCoordinator,
-        probe: Probe,
+        probe: ProbeDevice,
         description: CombustionButtonEntityDescription,
     ) -> None:
         """Initialize."""
@@ -89,4 +90,6 @@ class CombustionProbeButton(CombustionProbeControl, ButtonEntity):
 
     async def async_press(self) -> None:
         """Send the command and wait for the probe to acknowledge it."""
-        await self.entity_description.press_fn(self._coordinator, self._device)
+        await self.entity_description.press_fn(
+            self._coordinator, self._device.bluetooth
+        )

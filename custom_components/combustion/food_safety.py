@@ -1,4 +1,4 @@
-"""SafeCook values and programs shared by sensors, selects, and actions.
+"""SafeCook programs shared by selects and actions.
 
 SafeCook comes from the same connected status as predictions, so it shares their option.
 """
@@ -18,8 +18,8 @@ from combustion_ble import (
 )
 
 
-def food_safe_value[T](
-    fn: Callable[[FoodSafe], T | None], *, integrated_only: bool = False
+def _program_value[T](
+    fn: Callable[[FoodSafe], T | None],
 ) -> Callable[[Probe], T | None]:
     """Read from the probe's SafeCook program.
 
@@ -28,9 +28,6 @@ def food_safe_value[T](
 
     def value(probe: Probe) -> T | None:
         if (food_safe := probe.food_safe) is None or not food_safe.program_set:
-            return None
-        if integrated_only and food_safe.mode is not FoodSafeMode.INTEGRATED:
-            # Simplified mode always reports 0, which would read as no progress.
             return None
         return fn(food_safe)
 
@@ -87,10 +84,10 @@ def serving_option(program: Program) -> str | None:
     return None
 
 
-current_product = food_safe_value(product_option)
+current_product = _program_value(product_option)
 """The probe's product option, unknown while SafeCook is off."""
 
-current_serving = food_safe_value(serving_option)
+current_serving = _program_value(serving_option)
 """The probe's serving option, unknown while SafeCook is off."""
 
 

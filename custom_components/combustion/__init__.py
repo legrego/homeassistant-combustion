@@ -10,7 +10,6 @@ https://github.com/legrego/homeassistant-combustion
 
 from __future__ import annotations
 
-from combustion_ble import Gauge, Probe
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
@@ -19,7 +18,6 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import CONF_ENABLE_PREDICTIONS, DOMAIN
 from .coordinator import CombustionConfigEntry, CombustionCoordinator
-from .entity import device_identifier
 from .services import async_setup_services
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -83,9 +81,5 @@ async def async_remove_config_entry_device(
 
     A device heard since then would not get its entities back until the next restart.
     """
-    heard = {
-        (DOMAIN, device_identifier(device))
-        for device in entry.runtime_data.meatnet.devices
-        if isinstance(device, Probe | Gauge)
-    }
+    heard = {(DOMAIN, identifier) for identifier in entry.runtime_data.devices}
     return heard.isdisjoint(device_entry.identifiers)

@@ -13,7 +13,7 @@ rules:
     comment: Icons and logos are in brand/ and https://github.com/home-assistant/brands/tree/master/custom_integrations/combustion.
   common-modules:
     status: done
-    comment: Shared Bluetooth handling is in coordinator.py and the base entity is in entity.py.
+    comment: Shared Bluetooth handling is in coordinator.py, the devices entities read from are in device.py, and the base entity is in entity.py.
   config-flow:
     status: done
     comment: Manual setup and Bluetooth discovery share a confirmation flow. An options flow enables prediction connections, which also set and cancel cooking targets.
