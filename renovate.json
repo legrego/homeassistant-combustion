@@ -12,6 +12,35 @@
       ],
       "groupName": "Home Assistant",
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "These dependencies must match what the pinned Home Assistant requires. Update them with Home Assistant.",
+      "matchPackageNames": [
+        "aiousbwatcher",
+        "bleak",
+        "bleak-retry-connector",
+        "bluetooth-adapters",
+        "bluetooth-auto-recovery",
+        "bluetooth-data-tools",
+        "colorlog",
+        "dbus-fast",
+        "habluetooth",
+        "serialx"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Keep Python on 3.14; coordinate minor upgrades with Home Assistant.",
+      "matchDatasources": ["python-version"],
+      "allowedVersions": ">=3.14,<3.15"
+    },
+    {
+      "description": "Keep CI and the development container on Python 3.14.",
+      "matchPackageNames": [
+        "actions/python-versions",
+        "mcr.microsoft.com/devcontainers/python"
+      ],
+      "allowedVersions": "/^3\\.14(?:[.-]|$)/"
     }
   ]
 }
