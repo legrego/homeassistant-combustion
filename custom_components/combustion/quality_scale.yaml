@@ -7,13 +7,13 @@ rules:
     comment: async_setup registers combustion.configure_safecook, which validates its probe and reports when the integration isn't ready to reach it. Cooking targets use the standard number.set_value and button.press actions.
   appropriate-polling:
     status: exempt
-    comment: Readings are pushed by Bluetooth advertisements and optional connected status notifications. The expiry timer only checks cached data, countdowns, and device availability. Firmware and hardware versions, which advertisements don't carry, are read once a day per online device, through an existing connection where possible.
+    comment: Readings are pushed by Bluetooth advertisements, optional connected status notifications, and an optional MeatNet Cloud stream. The expiry timer only checks cached data, countdowns, and device availability. Firmware and hardware versions, which advertisements don't carry, are read once a day per online device, through an existing connection where possible.
   brands:
     status: done
     comment: Icons and logos are in brand/ and https://github.com/home-assistant/brands/tree/master/custom_integrations/combustion.
   common-modules:
     status: done
-    comment: Shared Bluetooth handling is in coordinator.py, the devices entities read from are in device.py, and the base entity is in entity.py.
+    comment: Shared Bluetooth handling is in coordinator.py, the MeatNet Cloud connection is in cloud.py, the devices entities read from, whichever source reports them, are in device.py, and the base entity is in entity.py.
   config-flow:
     status: done
     comment: Manual setup and Bluetooth discovery share a confirmation flow. An options flow enables prediction connections, which also set and cancel cooking targets, and links an optional MeatNet Cloud account. Only the session's refresh token, email, and account ID are stored.
@@ -41,7 +41,7 @@ rules:
     comment: The integration does not provide custom conditions.
   docs-high-level-description:
     status: done
-    comment: README.md describes Combustion thermometers, gauges, passive readings, and optional prediction connections.
+    comment: README.md describes Combustion thermometers, gauges, passive readings, optional prediction connections, and the optional MeatNet Cloud account.
   docs-installation-instructions:
     status: done
     comment: README.md covers Bluetooth prerequisites, installing the custom component, discovery, and manual UI setup.
@@ -81,14 +81,14 @@ rules:
     status: done
     comment: async_unload_entry unloads both platforms; unload callbacks remove Bluetooth, timer, and platform listeners. Tests cover unloading and reloading with existing and newly discovered devices.
   docs-configuration-parameters:
-    status: todo
-    comment: README.md documents the predictions option. Linking a MeatNet Cloud account is not documented yet.
+    status: done
+    comment: README.md documents the predictions option, and linking and unlinking a MeatNet Cloud account.
   docs-installation-parameters:
     status: exempt
     comment: Setup only asks for confirmation, with no input parameters. README.md documents this setup flow.
   entity-unavailable:
     status: done
-    comment: CombustionEntity.available follows MeatNet device availability. Tests verify expiry after 2 minutes and automatic recovery when advertisements resume.
+    comment: CombustionEntity.available follows MeatNet device availability, or a recent MeatNet Cloud sample. Controls only follow Bluetooth. Tests verify expiry after 2 minutes and automatic recovery when either source resumes.
   integration-owner:
     status: done
     comment: The manifest lists @legrego as the integration owner.

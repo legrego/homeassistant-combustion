@@ -15,7 +15,7 @@ from .coordinator import CombustionConfigEntry
 from .device import CombustionDevice
 from .entity import CombustionEntity
 
-# Entities only update from pushed advertisements.
+# Entities only update from pushed data.
 PARALLEL_UPDATES = 0
 
 
@@ -47,6 +47,6 @@ class CombustionBatterySensor(CombustionEntity, BinarySensorEntity):
     """Whether a device's battery is low."""
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         """Return whether the battery is low."""
         return self._device.low_battery

@@ -2,7 +2,7 @@
 
 Creates entities for Combustion Predictive Thermometers and Giant Grill Gauges from their Bluetooth
 advertisements, heard directly or relayed by MeatNet repeaters (Display, Booster, Engine, or Giant
-Grill Gauge).
+Grill Gauge). Probes linked to an optional MeatNet Cloud account can be out of Bluetooth range.
 
 For more details about this integration, please refer to
 https://github.com/legrego/homeassistant-combustion
@@ -90,9 +90,12 @@ async def _async_entry_updated(
 async def async_remove_config_entry_device(
     hass: HomeAssistant, entry: CombustionConfigEntry, device_entry: DeviceEntry
 ) -> bool:
-    """Let users remove a device that hasn't been heard since Home Assistant started.
+    """Let users remove a device not heard since Home Assistant started, nor linked to the cloud.
 
-    A device heard since then would not get its entities back until the next restart.
+    Others would come back, or not get their entities back until the next restart.
     """
-    heard = {(DOMAIN, identifier) for identifier in entry.runtime_data.devices}
-    return heard.isdisjoint(device_entry.identifiers)
+    return all(
+        entry.runtime_data.async_forget_device(identifier)
+        for domain, identifier in device_entry.identifiers
+        if domain == DOMAIN
+    )

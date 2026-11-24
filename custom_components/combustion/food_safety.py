@@ -20,13 +20,15 @@ from combustion_ble import (
 
 def _program_value[T](
     fn: Callable[[FoodSafe], T | None],
-) -> Callable[[Probe], T | None]:
+) -> Callable[[Probe | None], T | None]:
     """Read from the probe's SafeCook program.
 
     Unknown until a connection reports SafeCook data, and while SafeCook is off.
     """
 
-    def value(probe: Probe) -> T | None:
+    def value(probe: Probe | None) -> T | None:
+        if probe is None:  # Not heard over Bluetooth.
+            return None
         if (food_safe := probe.food_safe) is None or not food_safe.program_set:
             return None
         return fn(food_safe)

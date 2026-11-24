@@ -67,6 +67,8 @@ def _probe_for_device(
                         translation_domain=DOMAIN,
                         translation_key="predictions_disabled",
                     )
+                if known.bluetooth is None:  # Only reported by MeatNet Cloud.
+                    break
                 return coordinator, known.bluetooth
     # A probe not heard since Home Assistant started, or with the integration not loaded.
     raise ServiceValidationError(

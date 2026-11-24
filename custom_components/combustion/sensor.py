@@ -25,6 +25,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
+from .const import SOURCE_BLUETOOTH, SOURCE_CLOUD
 from .coordinator import CombustionConfigEntry
 from .device import (
     FOOD_SAFETY_STATUSES,
@@ -36,7 +37,7 @@ from .device import (
 )
 from .entity import CombustionEntity, async_remove_entities
 
-# Entities only update from pushed advertisements.
+# Entities only update from pushed data.
 PARALLEL_UPDATES = 0
 
 
@@ -45,7 +46,7 @@ class CombustionSensorEntityDescription(SensorEntityDescription):
     """Describes a Combustion sensor."""
 
     value_fn: Callable[[Any], StateType]
-    thermistor_fn: Callable[[ProbeDevice], int] | None = None
+    thermistor_fn: Callable[[ProbeDevice], int | None] | None = None
     """For virtual sensors: which thermistor (1-8) the reading comes from."""
 
 
@@ -140,18 +141,22 @@ async def async_setup_entry(
     # The cooking target became a number entity, and the SafeCook product and serving became
     # selects, which can also set them.
     removed = {"prediction_target", "food_safety_product", "food_safety_serving"}
-    if not entry.runtime_data.enable_predictions:
+    probe_sensors = PROBE_SENSORS
+    if entry.runtime_data.enable_predictions or entry.runtime_data.cloud is not None:
+        probe_sensors += CONNECTED_SENSORS
+    else:
         removed.update(description.key for description in CONNECTED_SENSORS)
+    if entry.runtime_data.cloud is not None:
+        probe_sensors += (DATA_SOURCE,)
+    else:
+        removed.add(DATA_SOURCE.key)
     async_remove_entities(hass, entry.entry_id, SENSOR_DOMAIN, removed)
 
     @callback
     def _async_add_device(device: CombustionDevice) -> None:
-        if isinstance(device, ProbeDevice):
-            descriptions = PROBE_SENSORS
-            if entry.runtime_data.enable_predictions:
-                descriptions += CONNECTED_SENSORS
-        else:
-            descriptions = GAUGE_SENSORS
+        descriptions = (
+            probe_sensors if isinstance(device, ProbeDevice) else GAUGE_SENSORS
+        )
         async_add_entities(
             CombustionSensor(device, description) for description in descriptions
         )
@@ -265,4 +270,15 @@ FOOD_SAFETY_SENSORS = (
 )
 
 CONNECTED_SENSORS = PREDICTION_SENSORS + FOOD_SAFETY_SENSORS
-"""Sensors that need a connection, enabled by the predictions option."""
+"""Sensors that need a Bluetooth connection, enabled by the predictions option, or the cloud."""
+
+DATA_SOURCE = CombustionSensorEntityDescription(
+    key="data_source",
+    translation_key="data_source",
+    device_class=SensorDeviceClass.ENUM,
+    options=[SOURCE_BLUETOOTH, SOURCE_CLOUD],
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+    value_fn=lambda probe: probe.source,
+)
+"""Where a probe's readings come from, when a MeatNet Cloud account is linked."""

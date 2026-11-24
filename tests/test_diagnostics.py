@@ -56,10 +56,20 @@ async def test_bluetooth(hass: HomeAssistant, connection) -> None:  # noqa: F811
     probe, gauge = bluetooth["devices"].values()
     assert probe["available"]
     assert probe["hop_count"] is None
+    assert probe["prediction_reported"]
+    assert probe["food_safety_reported"]
+    assert gauge["available"]
+    assert list(bluetooth["devices"]) == list(result["devices"])
+    probe, gauge = result["devices"].values()
+    assert probe["available"]
+    assert probe["source"] == "bluetooth"
+    assert probe["bluetooth_age"] == pytest.approx(0, abs=5)
+    assert probe["cloud_age"] is None
     assert probe["readings"]["core_thermistor"] == 1
     assert probe["prediction"]["status"] == "predicting"
     assert probe["food_safety"]["status"] == "not_safe"
     assert gauge["model"] == "Giant Grill Gauge"
+    assert gauge["available"]
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -102,6 +112,13 @@ async def test_cloud(hass: HomeAssistant, cloud: FakeCloud) -> None:
     await cloud.send(status_event(temperature=50.0))
 
     result = await get_diagnostics(hass, entry)
+    # A linked probe that hasn't been heard, and the two that have.
+    assert list(result["devices"]) == ["device 1", "device 2", "device 3"]
+    assert [device.get("source") for device in result["devices"].values()] == [
+        "bluetooth",
+        None,
+        None,
+    ]
     assert list(result["bluetooth"]["devices"]) == ["device 1", "device 2"]
     details = result["cloud"]
     assert details["connected"]

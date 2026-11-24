@@ -90,6 +90,4 @@ class CombustionProbeButton(CombustionProbeControl, ButtonEntity):
 
     async def async_press(self) -> None:
         """Send the command and wait for the probe to acknowledge it."""
-        await self.entity_description.press_fn(
-            self._coordinator, self._device.bluetooth
-        )
+        await self.entity_description.press_fn(self._coordinator, self._probe)

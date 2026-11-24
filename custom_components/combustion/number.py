@@ -78,4 +78,4 @@ class CombustionTargetNumber(CombustionProbeControl, NumberEntity):
         """
         # Converting from Fahrenheit can land just outside the probe's range.
         celsius = min(max(round(value, 1), MIN_TARGET), MAX_TARGET)
-        await self._coordinator.async_set_prediction(self._device.bluetooth, celsius)
+        await self._coordinator.async_set_prediction(self._probe, celsius)

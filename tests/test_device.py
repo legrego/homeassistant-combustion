@@ -37,8 +37,10 @@ def make_probe(**payload) -> ProbeDevice:
     """Return a probe heard over Bluetooth."""
     meatnet = MeatNet()
     meatnet.handle_advertisement(PROBE_ADDRESS, probe_payload(**payload), -61)
-    (probe,) = meatnet.probes.values()
-    return ProbeDevice(probe)
+    (heard,) = meatnet.probes.values()
+    probe = ProbeDevice(heard.serial_number)
+    probe.async_set_bluetooth(heard)
+    return probe
 
 
 @pytest.mark.parametrize(
@@ -100,7 +102,8 @@ def test_listeners() -> None:
     """Listeners follow the device until they are removed."""
     meatnet = MeatNet()
     meatnet.handle_advertisement(PROBE_ADDRESS, probe_payload())
-    probe = ProbeDevice(meatnet.probes[PROBE_SERIAL])
+    probe = ProbeDevice(PROBE_SERIAL)
+    probe.async_set_bluetooth(meatnet.probes[PROBE_SERIAL])
     calls: list[float | None] = []
     remove = probe.async_add_listener(lambda: calls.append(probe.readings.core))
     meatnet.handle_advertisement(PROBE_ADDRESS, probe_payload(temperatures=[60.0] * 8))
