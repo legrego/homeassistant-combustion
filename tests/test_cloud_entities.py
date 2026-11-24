@@ -252,6 +252,74 @@ async def test_handover(
     assert state(hass, f"{PROBE}--rssi") == STATE_UNKNOWN
 
 
+async def test_instant_read_at_the_edge_of_range(
+    hass: HomeAssistant, cloud: FakeCloud, clock: FakeClock, freezer
+) -> None:
+    """Instant read advertisements don't bring back old temperatures over the cloud's."""
+    await setup_cloud(hass, cloud)
+    await hear(hass, 30)
+    await pass_time(hass, clock, freezer, 60)
+    await send(hass, cloud, status_event(temperature=50.0))
+    assert float(state(hass, CORE)) == 50
+
+    async def hear_instant_read(reading: float) -> None:
+        inject_bt_advertisement(
+            hass, service_info(probe_payload(instant_read=reading), time=clock.now)
+        )
+        await hass.async_block_till_done()
+
+    await hear_instant_read(60.0)
+    assert float(state(hass, CORE)) == 50
+    assert state(hass, f"{PROBE}--data_source") == "cloud"
+    # It is still shown, and the probe's signal strength is current.
+    assert float(state(hass, f"{PROBE}--instant_read")) == 60
+    assert float(state(hass, f"{PROBE}--rssi")) < 0
+    await pass_time(hass, clock, freezer, 1)
+    assert float(state(hass, CORE)) == 50
+
+    # The cloud goes quiet, but instant read goes on. Temperatures from before aren't shown again.
+    for reading in (61.0, 62.0):
+        await pass_time(hass, clock, freezer, 60)
+        await hear_instant_read(reading)
+    await pass_time(hass, clock, freezer, 1)
+    assert state(hass, CORE) == STATE_UNKNOWN
+    assert state(hass, f"{PROBE}--data_source") == "bluetooth"
+
+    await hear(hass, 35)
+    assert float(state(hass, CORE)) == 35
+
+
+async def test_only_heard_in_instant_read(
+    hass: HomeAssistant, cloud: FakeCloud, clock: FakeClock, freezer
+) -> None:
+    """A probe heard only in instant read mode keeps the cloud's temperatures."""
+    cloud.snapshot = snapshot(status_data(temperature=50.0))
+    await setup_cloud(hass, cloud)
+    inject_bt_advertisement(hass, service_info(probe_payload(instant_read=60.0)))
+    await hass.async_block_till_done()
+    await pass_time(hass, clock, freezer, 1)
+    assert float(state(hass, CORE)) == 50
+    assert state(hass, f"{PROBE}--data_source") == "cloud"
+    assert float(state(hass, f"{PROBE}--instant_read")) == 60
+
+
+async def test_steady_bluetooth_readings(
+    hass: HomeAssistant, cloud: FakeCloud, clock: FakeClock, freezer
+) -> None:
+    """Bluetooth readings that don't change stay recent while they are being heard."""
+    await setup_cloud(hass, cloud)
+    for _ in range(4):
+        # Home Assistant only records identical advertisements, rather than passing them on.
+        inject_bt_advertisement(
+            hass,
+            service_info(probe_payload(temperatures=[30.0] * 8), time=clock.now),
+        )
+        await pass_time(hass, clock, freezer, 20)
+        await send(hass, cloud, status_event(temperature=50.0))
+        assert float(state(hass, CORE)) == 30
+        assert state(hass, f"{PROBE}--data_source") == "bluetooth"
+
+
 async def test_cloud_goes_quiet(
     hass: HomeAssistant, cloud: FakeCloud, clock: FakeClock, freezer
 ) -> None:

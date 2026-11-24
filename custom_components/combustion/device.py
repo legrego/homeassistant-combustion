@@ -216,6 +216,8 @@ class ProbeDevice(CombustionDevice):
         self.identity = DeviceIdentity.probe(serial_number)
         """The probe's identity in MeatNet Cloud."""
         self._bluetooth: Probe | None = None
+        self._bluetooth_readings_at: float | None = None
+        """Clock time of the last advertisement that carried temperatures."""
         self._cloud: DeviceStatus | None = None
         self._notified = self._state()
 
@@ -232,8 +234,19 @@ class ProbeDevice(CombustionDevice):
     def async_set_bluetooth(self, probe: Probe) -> None:
         """Follow the probe's Bluetooth state, once it has been heard."""
         self._bluetooth = probe
+        if probe.temperatures is not None:
+            self._bluetooth_readings_at = probe.last_seen
         probe.add_listener(self._async_notify)
         self._async_notify()
+
+    @callback
+    def async_readings_heard(self) -> None:
+        """Note that a Bluetooth advertisement carries temperatures, changed or not.
+
+        The library only dates advertisements of any kind. A probe in instant read mode also sends
+        ones without temperatures, which may be all that is heard at the edge of range.
+        """
+        self._bluetooth_readings_at = monotonic()
 
     @property
     def cloud(self) -> DeviceStatus | None:
@@ -276,6 +289,14 @@ class ProbeDevice(CombustionDevice):
         return monotonic() - probe.last_seen
 
     @property
+    def bluetooth_readings_age(self) -> float | None:
+        """Age of the Bluetooth temperatures in seconds, or ``None`` if there are none to use."""
+        probe, readings_at = self._bluetooth, self._bluetooth_readings_at
+        if probe is None or not probe.available or readings_at is None:
+            return None
+        return monotonic() - readings_at
+
+    @property
     def cloud_age(self) -> float | None:
         """Age of the cloud sample in seconds, or ``None`` if there is no usable one."""
         status = self._cloud
@@ -291,13 +312,14 @@ class ProbeDevice(CombustionDevice):
     @property
     def source(self) -> str | None:
         """Where readings come from, or ``None`` when neither source has recent ones."""
-        bluetooth_age = self.bluetooth_age
+        readings_age = self.bluetooth_readings_age
         cloud_age = self.cloud_age
         if cloud_age is None or cloud_age > STALE_TIMEOUT:
-            return None if bluetooth_age is None else SOURCE_BLUETOOTH
-        if bluetooth_age is None:
+            # Bluetooth needn't have temperatures, as instant read works without them.
+            return None if self.bluetooth_age is None else SOURCE_BLUETOOTH
+        if readings_age is None:
             return SOURCE_CLOUD
-        if bluetooth_age <= BLUETOOTH_PREFERENCE or bluetooth_age <= cloud_age:
+        if readings_age <= BLUETOOTH_PREFERENCE or readings_age <= cloud_age:
             return SOURCE_BLUETOOTH
         return SOURCE_CLOUD
 
@@ -340,8 +362,10 @@ class ProbeDevice(CombustionDevice):
         probe = self._bluetooth
         if probe is None:
             return ProbeReadings()
+        age = self.bluetooth_readings_age
         return ProbeReadings(
-            probe.temperatures,
+            # The probe can be available for longer than its last temperatures are worth showing.
+            probe.temperatures if age is not None and age <= STALE_TIMEOUT else None,
             # Members are named after their thermistor, e.g. VirtualSurfaceSensor.T6.
             int(probe.core_sensor.name[1:]),
             int(probe.surface_sensor.name[1:]),

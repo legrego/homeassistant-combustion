@@ -27,9 +27,8 @@ CONF_REFRESH_TOKEN = "refresh_token"
 # probes flap between available and unavailable.
 STALE_TIMEOUT = 120
 
-# Seconds since a probe was last heard over Bluetooth that its Bluetooth readings are kept over
-# newer ones from MeatNet Cloud. Switching sooner would follow a weak Bluetooth signal back and
-# forth.
+# Seconds since a probe's temperatures were last heard over Bluetooth that they are kept over newer
+# ones from MeatNet Cloud. Switching sooner would follow a weak Bluetooth signal back and forth.
 BLUETOOTH_PREFERENCE = 30
 
 # Seconds that cloud predictions and SafeCook progress are shown for. They change with every sample,

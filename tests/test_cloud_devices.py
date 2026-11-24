@@ -60,15 +60,12 @@ def hear(probe: ProbeDevice, **payload: Any) -> MeatNet:
 
 
 @pytest.mark.parametrize(
-    ("bluetooth_age", "cloud_age", "source"),
+    ("readings_age", "cloud_age", "source"),
     [
         (None, None, None),
         (0, None, "bluetooth"),
-        (
-            119,
-            None,
-            "bluetooth",
-        ),  # Bluetooth ages are only known while it is available.
+        # Bluetooth readings are only dated while the probe is available.
+        (119, None, "bluetooth"),
         (None, 0, "cloud"),
         (None, 120, "cloud"),
         (None, 120.1, None),
@@ -85,13 +82,19 @@ def hear(probe: ProbeDevice, **payload: Any) -> MeatNet:
     ],
 )
 def test_source(
-    bluetooth_age: float | None, cloud_age: float | None, source: str | None
+    readings_age: float | None, cloud_age: float | None, source: str | None
 ) -> None:
     """Readings come from Bluetooth if it is recent, and otherwise from the newest source."""
     probe = ProbeDevice(PROBE_SERIAL)
     with (
+        # Every advertisement carried readings.
         patch.object(
-            ProbeDevice, "bluetooth_age", PropertyMock(return_value=bluetooth_age)
+            ProbeDevice, "bluetooth_age", PropertyMock(return_value=readings_age)
+        ),
+        patch.object(
+            ProbeDevice,
+            "bluetooth_readings_age",
+            PropertyMock(return_value=readings_age),
         ),
         patch.object(ProbeDevice, "cloud_age", PropertyMock(return_value=cloud_age)),
     ):
@@ -99,12 +102,47 @@ def test_source(
         assert probe.available == (source is not None)
 
 
+@pytest.mark.parametrize(
+    ("readings_age", "cloud_age", "source"),
+    [
+        # Nothing but instant read advertisements.
+        (None, None, "bluetooth"),
+        (None, 0, "cloud"),
+        (None, 120.1, "bluetooth"),
+        # Instant read advertisements since the last one with temperatures.
+        (30, 0, "bluetooth"),
+        (31, 0, "cloud"),
+        (60, 59, "cloud"),
+        (60, 61, "bluetooth"),
+        (500, 100, "cloud"),
+        (500, 120.1, "bluetooth"),
+    ],
+)
+def test_source_in_instant_read(
+    readings_age: float | None, cloud_age: float | None, source: str
+) -> None:
+    """An advertisement without temperatures doesn't make Bluetooth's any newer."""
+    probe = ProbeDevice(PROBE_SERIAL)
+    with (
+        patch.object(ProbeDevice, "bluetooth_age", PropertyMock(return_value=0)),
+        patch.object(
+            ProbeDevice,
+            "bluetooth_readings_age",
+            PropertyMock(return_value=readings_age),
+        ),
+        patch.object(ProbeDevice, "cloud_age", PropertyMock(return_value=cloud_age)),
+    ):
+        assert probe.source == source
+        assert probe.available
+
+
 def test_unreported_probe() -> None:
     """A probe that nothing has reported has no values."""
     probe = ProbeDevice(PROBE_SERIAL)
     assert not probe.available
     assert probe.bluetooth is probe.cloud is None
-    assert probe.bluetooth_age is probe.cloud_age is None
+    assert probe.bluetooth_age is probe.bluetooth_readings_age is None
+    assert probe.cloud_age is None
     assert probe.low_battery is probe.rssi is probe.instant_read is None
     assert probe.prediction is probe.food_safety is None
     assert probe.readings == ProbeReadings()
@@ -157,6 +195,52 @@ def test_bluetooth_age() -> None:
         meatnet.expire()
         assert probe.bluetooth_age is None
         assert probe.rssi is None
+
+
+def test_bluetooth_readings_age() -> None:
+    """Bluetooth readings are dated by the last advertisement that carried any."""
+    now = 100.0
+    meatnet = MeatNet(stale_timeout=120, clock=lambda: now)
+    probe = ProbeDevice(PROBE_SERIAL)
+    with patch("custom_components.combustion.device.monotonic", lambda: now):
+        meatnet.handle_advertisement(
+            PROBE_ADDRESS, probe_payload(instant_read=60.0), -61
+        )
+        probe.async_set_bluetooth(meatnet.probes[PROBE_SERIAL])
+        assert probe.bluetooth_age == 0
+        assert probe.bluetooth_readings_age is None
+        assert probe.readings.temperatures is None
+
+        now += 5
+        meatnet.handle_advertisement(PROBE_ADDRESS, probe_payload(), -61)
+        probe.async_readings_heard()
+        assert probe.bluetooth_readings_age == 0
+        assert probe.readings.core == 20
+
+        # Temperatures are kept through instant read, but not for longer than without it.
+        for _ in range(2):
+            now += 60
+            meatnet.handle_advertisement(
+                PROBE_ADDRESS, probe_payload(instant_read=60.0), -61
+            )
+            assert probe.bluetooth_age == 0
+            assert probe.readings.core == 20
+        assert probe.bluetooth_readings_age == 120
+        now += 1
+        assert probe.available
+        assert probe.readings.temperatures is probe.readings.core is None
+        assert probe.readings.core_thermistor == 1
+
+        now += 120
+        meatnet.expire()
+        assert probe.bluetooth_readings_age is None
+
+
+def test_bluetooth_readings_heard_first() -> None:
+    """A probe first heard with readings has their age from the start."""
+    probe = ProbeDevice(PROBE_SERIAL)
+    hear(probe)
+    assert probe.bluetooth_readings_age == pytest.approx(0, abs=5)
 
 
 def test_cloud_readings() -> None:
@@ -363,7 +447,9 @@ def test_bluetooth_predictions_come_first() -> None:
     assert probe.food_safety == ProbeFoodSafety("not_safe", 54.4, 300, 2.3, 6.5)
 
     # Even while readings come from the cloud.
-    with patch.object(ProbeDevice, "bluetooth_age", PropertyMock(return_value=40)):
+    with patch.object(
+        ProbeDevice, "bluetooth_readings_age", PropertyMock(return_value=40)
+    ):
         assert probe.source == "cloud"
         assert probe.prediction.target == 65
         assert probe.food_safety.threshold_temperature == 54.4
@@ -423,7 +509,9 @@ def test_listeners_follow_source() -> None:
     calls: list[str | None] = []
     probe.async_add_listener(lambda: calls.append(probe.source))
     readings = probe.readings
-    with patch.object(ProbeDevice, "bluetooth_age", PropertyMock(return_value=40)):
+    with patch.object(
+        ProbeDevice, "bluetooth_readings_age", PropertyMock(return_value=40)
+    ):
         probe.async_refresh()
         assert probe.readings == readings
     assert calls == ["cloud"]

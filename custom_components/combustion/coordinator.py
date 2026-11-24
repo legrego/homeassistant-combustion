@@ -20,6 +20,7 @@ from combustion_ble import (
     NodeSession,
     Probe,
     ProbeAdvertisement,
+    ProbeMode,
     ProbeSession,
     RequestRejectedError,
     parse_advertisement,
@@ -299,25 +300,36 @@ class CombustionCoordinator:
         change: bluetooth.BluetoothChange = bluetooth.BluetoothChange.ADVERTISEMENT,
     ) -> None:
         self._handled_times[service_info.address] = service_info.time
+        payload = service_info.manufacturer_data.get(COMBUSTION_MANUFACTURER_ID)
+        advertisement = None if payload is None else parse_advertisement(payload)
+        if isinstance(advertisement, ProbeAdvertisement) and advertisement.has_probe:
+            self._async_handle_probe_advertisement(service_info, advertisement)
+        else:
+            self.meatnet.handle_service_info(service_info)
+
+    @callback
+    def _async_handle_probe_advertisement(
+        self,
+        service_info: bluetooth.BluetoothServiceInfoBleak,
+        advertisement: ProbeAdvertisement,
+    ) -> None:
+        serial_number = advertisement.serial_number
+        device = self.devices.get(probe_identifier(serial_number))
+        # First, so that listeners see the new temperatures as recent. The library ignores them if
+        # it has recently used some from a better route, which are then about as recent.
+        if advertisement.mode is ProbeMode.NORMAL and isinstance(device, ProbeDevice):
+            device.async_readings_heard()
         self.meatnet.handle_service_info(service_info)
-        if self.enable_predictions and not self._predictions_stopped:
-            payload = service_info.manufacturer_data.get(COMBUSTION_MANUFACTURER_ID)
-            advertisement = (
-                parse_advertisement(payload) if payload is not None else None
+        if (
+            self.enable_predictions
+            and not self._predictions_stopped
+            and not advertisement.is_repeated
+            and serial_number in self._plan().direct
+            and serial_number not in self._retiring
+        ):
+            self.prediction_for(self.meatnet.probes[serial_number]).async_connect(
+                service_info.address
             )
-            if (
-                isinstance(advertisement, ProbeAdvertisement)
-                and advertisement.has_probe
-                and not advertisement.is_repeated
-            ):
-                serial_number = advertisement.serial_number
-                if (
-                    serial_number in self._plan().direct
-                    and serial_number not in self._retiring
-                ):
-                    self.prediction_for(
-                        self.meatnet.probes[serial_number]
-                    ).async_connect(service_info.address)
 
     @callback
     def _async_tick(self, _now: datetime) -> None:
@@ -334,10 +346,11 @@ class CombustionCoordinator:
 
         self.meatnet.expire()
         for device in self.devices.values():
-            if isinstance(device, ProbeDevice) and device.cloud is not None:
-                # Cloud samples age, and countdowns continue, without any event.
+            if isinstance(device, ProbeDevice):
+                # Readings age, and cloud countdowns continue, without any event.
                 device.async_refresh()
-                self._async_record_revisions(device)
+                if device.cloud is not None:
+                    self._async_record_revisions(device)
         if self._predictions_stopped:
             return
         plan = None

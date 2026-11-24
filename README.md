@@ -171,7 +171,7 @@ If the service stops accepting the account, Home Assistant asks you to sign in a
 
 Data | Source
 -- | --
-Temperatures and battery | Bluetooth, if the probe was heard in the last 30 seconds. Otherwise the newest of either source, until it is 2 minutes old.
+Temperatures and battery | Bluetooth, if it reported temperatures in the last 30 seconds. Otherwise the newest of either source, until it is 2 minutes old. Instant read broadcasts don't include these temperatures.
 Time remaining, prediction status, and SafeCook sensors | A Bluetooth prediction connection that reports the probe. Otherwise the cloud, if its sample is less than 30 seconds old.
 Firmware and hardware versions | Either source. The cloud's are used only from recent samples.
 Instant read temperature and RSSI | Bluetooth only.
