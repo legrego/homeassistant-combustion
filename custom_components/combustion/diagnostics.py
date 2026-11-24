@@ -82,6 +82,7 @@ def _device(device: CombustionDevice) -> dict[str, Any]:
         result |= {
             "source": device.source,
             "bluetooth_age": device.bluetooth_age,
+            "bluetooth_readings_age": device.bluetooth_readings_age,
             "cloud_age": device.cloud_age,
             "readings": asdict(device.readings),
             "prediction": None if prediction is None else asdict(prediction),

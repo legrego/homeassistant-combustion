@@ -64,6 +64,7 @@ async def test_bluetooth(hass: HomeAssistant, connection) -> None:  # noqa: F811
     assert probe["available"]
     assert probe["source"] == "bluetooth"
     assert probe["bluetooth_age"] == pytest.approx(0, abs=5)
+    assert probe["bluetooth_readings_age"] == pytest.approx(0, abs=5)
     assert probe["cloud_age"] is None
     assert probe["readings"]["core_thermistor"] == 1
     assert probe["prediction"]["status"] == "predicting"
