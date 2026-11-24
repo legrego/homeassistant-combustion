@@ -38,7 +38,8 @@ from .device import (
     CombustionDevice,
     GaugeDevice,
     ProbeDevice,
-    device_identifier,
+    Revisions,
+    probe_identifier,
 )
 from .food_safety import Program, product_option, serving_option
 from .prediction import NodeCommand, PredictionMonitor, ProbeCommand, RepeaterMonitor
@@ -56,12 +57,15 @@ type CombustionConfigEntry = ConfigEntry[CombustionCoordinator]
 
 
 class CombustionCoordinator:
-    """Keeps a MeatNet up to date with advertisements from Home Assistant's Bluetooth integration.
+    """Keeps devices up to date with advertisements from Home Assistant's Bluetooth integration.
 
     Home Assistant owns all scanning. Temperature readings work with passive adapters and proxies.
     Optional predictions use connectable adapters: one connection to a MeatNet repeater, which
     relays predictions for every probe on its network, and direct connections only to probes the
     repeater is not reporting.
+
+    Probes linked to an optional MeatNet Cloud account are also kept up to date from it. The cloud
+    is not a route to a probe, so connections and commands don't involve it.
     """
 
     def __init__(
@@ -89,6 +93,8 @@ class CombustionCoordinator:
         self.devices: dict[str, CombustionDevice] = {}
         """Devices with entities, by device registry identifier."""
         self._device_listeners: list[Callable[[CombustionDevice], None]] = []
+        # By device registry identifier, then source.
+        self._recorded_revisions: dict[str, dict[str, Revisions]] = {}
         # Direct connections being released because the repeater reports their probes. A probe
         # gets no new direct connection until its old session has let go of the probe.
         self._retiring: dict[int, PredictionMonitor] = {}
@@ -98,9 +104,7 @@ class CombustionCoordinator:
         # SafeCook programs written but not yet reported, by probe serial number.
         self._pending_food_safe: dict[int, _PendingProgram] = {}
         self._food_safe_locks: dict[int, asyncio.Lock] = {}
-        self.meatnet.add_device_listener(self._async_log_availability)
-        self.meatnet.add_device_listener(self._async_track_revisions)
-        self.meatnet.add_device_listener(self._async_add_bluetooth_device)
+        self.meatnet.add_device_listener(self._async_handle_heard_device)
 
     @callback
     def async_start(self) -> CALLBACK_TYPE:
@@ -124,10 +128,18 @@ class CombustionCoordinator:
             cancel_on_shutdown=True,
         )
 
+        cancel_cloud = (
+            None
+            if self.cloud is None
+            else self.cloud.async_add_listener(self._async_handle_cloud)
+        )
+
         @callback
         def _async_stop() -> None:
             cancel_callback()
             cancel_timer()
+            if cancel_cloud is not None:
+                cancel_cloud()
 
         return _async_stop
 
@@ -142,21 +154,89 @@ class CombustionCoordinator:
         return lambda: self._device_listeners.remove(listener)
 
     @callback
-    def _async_add_bluetooth_device(self, heard: Device) -> None:
-        """Add a device heard for the first time. Repeaters have no entities of their own."""
+    def _async_handle_heard_device(self, heard: Device) -> None:
+        """Follow a device heard over Bluetooth for the first time."""
         if isinstance(heard, Probe):
-            device: CombustionDevice = ProbeDevice(heard)
+            self._async_update_probe(
+                heard.serial_number, lambda probe: probe.async_set_bluetooth(heard)
+            )
         elif isinstance(heard, Gauge):
-            device = GaugeDevice(heard)
+            self._async_add_device(GaugeDevice(heard))
         else:
+            # Repeaters have no entities of their own.
+            self._async_log_availability(heard, heard.add_listener)
+
+    @callback
+    def _async_handle_cloud(self) -> None:
+        """Update probes from MeatNet Cloud, adding any that were newly linked."""
+        if self.cloud is None or self._predictions_stopped:
             return
+        linked = set()
+        for identity in self.cloud.linked:
+            # Other devices' cloud data is unverified, so they are only read over Bluetooth.
+            if (serial_number := identity.probe_serial) is not None:
+                status = self.cloud.store.devices.get(identity)
+                self._async_update_probe(
+                    serial_number,
+                    # Called before the loop continues.
+                    lambda probe, status=status: probe.async_set_cloud(status),
+                )
+                linked.add(probe_identifier(serial_number))
+        for device in self.devices.values():
+            if isinstance(device, ProbeDevice) and device.identifier not in linked:
+                device.async_set_cloud(None)
+
+    def is_linked(self, device: CombustionDevice) -> bool:
+        """Whether the device is a probe linked to the MeatNet Cloud account."""
+        return (
+            self.cloud is not None
+            and isinstance(device, ProbeDevice)
+            and device.identity in self.cloud.linked
+        )
+
+    @callback
+    def async_forget_device(self, identifier: str) -> bool:
+        """Forget a device that nothing reports, or return ``False`` if something does.
+
+        A device that is still reported would not get its entities back until the next restart.
+        """
+        if (device := self.devices.get(identifier)) is None:
+            return True
+        if device.bluetooth is not None or self.is_linked(device):
+            return False
+        # Were it reported again later, it would be added afresh.
+        del self.devices[identifier]
+        self._recorded_revisions.pop(identifier, None)
+        return True
+
+    @callback
+    def _async_update_probe(
+        self, serial_number: int, update: Callable[[ProbeDevice], None]
+    ) -> None:
+        """Update a probe, adding it the first time it is heard or found to be linked."""
+        device = self.devices.get(probe_identifier(serial_number))
+        if isinstance(device, ProbeDevice):
+            update(device)
+            return
+        device = ProbeDevice(serial_number)
+        update(device)
+        self._async_add_device(device)
+
+    @callback
+    def _async_add_device(self, device: CombustionDevice) -> None:
         self.devices[device.identifier] = device
+        self._async_log_availability(device, device.async_add_listener)
+        device.async_add_listener(lambda: self._async_record_revisions(device))
         for listener in list(self._device_listeners):
             listener(device)
 
     @callback
-    def _async_log_availability(self, device: Device) -> None:
-        """Log once when a device stops being heard, and once when it is heard again."""
+    def _async_log_availability(
+        self,
+        device: CombustionDevice | Device,
+        add_listener: Callable[[CALLBACK_TYPE], object],
+    ) -> None:
+        """Log once when a device stops being reported, and once when it is reported again."""
         was_available = device.available
 
         @callback
@@ -167,6 +247,13 @@ class CombustionCoordinator:
             was_available = device.available
             if was_available:
                 LOGGER.info("%s is available again", device)
+            elif isinstance(device, ProbeDevice) and self.is_linked(device):
+                LOGGER.info(
+                    "%s is unavailable: not reported over Bluetooth or by MeatNet Cloud for %d"
+                    " seconds",
+                    device,
+                    STALE_TIMEOUT,
+                )
             else:
                 LOGGER.info(
                     "%s is unavailable: not heard directly or through MeatNet for %d seconds",
@@ -174,51 +261,36 @@ class CombustionCoordinator:
                     STALE_TIMEOUT,
                 )
 
-        device.add_listener(_async_on_change)
+        add_listener(_async_on_change)
 
     @callback
-    def _async_track_revisions(self, device: Device) -> None:
-        """Copy firmware and hardware revisions to the device registry once they are read.
+    def _async_record_revisions(self, device: CombustionDevice) -> None:
+        """Copy firmware and hardware revisions to the device registry once they are known.
 
-        Revisions are only read through prediction connections. The registry keeps the last ones
-        read, so they still show after a restart or with predictions turned off.
+        Over Bluetooth, revisions are only read through connections. The registry keeps the last
+        ones read, so they still show after a restart or with predictions turned off.
         """
-        if not isinstance(device, Probe | Gauge):
-            return
-        identifier = (DOMAIN, device_identifier(device))
-        recorded: tuple[str | None, str | None] = (None, None)
-
-        @callback
-        def _async_on_change() -> None:
-            # Listeners run for every advertisement; revisions change rarely.
-            nonlocal recorded
-            firmware = device.firmware_version
-            revisions = (
-                None if firmware is None else firmware.raw,
-                device.hardware_revision,
-            )
-            if revisions == recorded:
-                return
+        # This runs for every advertisement; revisions change rarely. Each source's are recorded
+        # when they change, so sources that disagree don't take turns.
+        recorded = self._recorded_revisions.setdefault(device.identifier, {})
+        for source, revisions in device.revisions.items():
+            if revisions == recorded.get(source):
+                continue
             registry = dr.async_get(self.hass)
             entry = registry.async_get_device_by_identifier(
-                identifier, self.config_entry_id
+                (DOMAIN, device.identifier), self.config_entry_id
             )
-            if entry is None:
+            if entry is None:  # Its entities haven't been added yet.
                 return
-            recorded = revisions
+            recorded[source] = revisions
+            firmware, hardware = revisions
             changes: dict[str, str] = {}
-            if (firmware := device.firmware_version) is not None and (
-                str(firmware) != entry.sw_version
-            ):
-                changes["sw_version"] = str(firmware)
-            if (hardware := device.hardware_revision) is not None and (
-                hardware != entry.hw_version
-            ):
+            if firmware is not None and firmware != entry.sw_version:
+                changes["sw_version"] = firmware
+            if hardware is not None and hardware != entry.hw_version:
                 changes["hw_version"] = hardware
             if changes:
                 registry.async_update_device(entry.id, **changes)
-
-        device.add_listener(_async_on_change)
 
     @callback
     def _async_handle_service_info(
@@ -261,6 +333,11 @@ class CombustionCoordinator:
                 self._async_handle_service_info(service_info)
 
         self.meatnet.expire()
+        for device in self.devices.values():
+            if isinstance(device, ProbeDevice) and device.cloud is not None:
+                # Cloud samples age, and countdowns continue, without any event.
+                device.async_refresh()
+                self._async_record_revisions(device)
         if self._predictions_stopped:
             return
         plan = None

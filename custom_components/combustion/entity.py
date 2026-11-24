@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+from combustion_ble import Probe
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
@@ -50,12 +52,12 @@ class CombustionEntity(Entity):
             name=f"{device.model} {device.serial_number}",
             serial_number=device.serial_number,
         )
-        # No sw_version or hw_version: they are read later, through a prediction connection, and
-        # the coordinator records them in the device registry, which keeps the last ones read.
+        # No sw_version or hw_version: they become known later, and the coordinator records them in
+        # the device registry, which keeps the last ones known.
 
     @property
     def available(self) -> bool:
-        """Whether the device has been heard recently, directly or through MeatNet."""
+        """Whether the device has been reported recently."""
         return self._device.available
 
     async def async_added_to_hass(self) -> None:
@@ -82,10 +84,24 @@ class CombustionProbeControl(CombustionEntity):
 
     @property
     def available(self) -> bool:
-        """Whether a running connection can reach the probe."""
-        return super().available and self._coordinator.can_command(
-            self._device.bluetooth
+        """Whether a running connection can reach the probe. The cloud can't."""
+        probe = self._device.bluetooth
+        return (
+            probe is not None
+            and probe.available
+            and self._coordinator.can_command(probe)
         )
+
+    @property
+    def _probe(self) -> Probe:
+        """The probe to send commands to."""
+        if (probe := self._device.bluetooth) is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="not_connected",
+                translation_placeholders={"probe": self._device.serial_number},
+            )
+        return probe
 
     @callback
     def async_write_ha_state(self) -> None:

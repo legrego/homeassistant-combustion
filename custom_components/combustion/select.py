@@ -99,7 +99,7 @@ class CombustionProductSelect(CombustionProbeControl, SelectEntity):
                 product, SERVINGS.get(serving or "", Serving.SERVED_IMMEDIATELY)
             )
 
-        await self._coordinator.async_change_food_safe(self._device.bluetooth, change)
+        await self._coordinator.async_change_food_safe(self._probe, change)
 
 
 class CombustionServingSelect(CombustionProbeControl, SelectEntity):
@@ -135,4 +135,4 @@ class CombustionServingSelect(CombustionProbeControl, SelectEntity):
                 )
             return simplified_program(product, SERVINGS[option])
 
-        await self._coordinator.async_change_food_safe(self._device.bluetooth, change)
+        await self._coordinator.async_change_food_safe(self._probe, change)

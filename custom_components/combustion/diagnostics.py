@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
+from combustion_ble import Gauge, Probe
 from combustion_cloud import DeviceIdentity, DeviceStatus
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -41,6 +42,10 @@ async def async_get_config_entry_diagnostics(
         "options": {
             CONF_ENABLE_PREDICTIONS: entry.options.get(CONF_ENABLE_PREDICTIONS, False)
         },
+        "devices": {
+            labels(device.identifier): _device(device)
+            for device in coordinator.devices.values()
+        },
         "bluetooth": _bluetooth(coordinator, labels),
         "cloud": (
             None if coordinator.cloud is None else _cloud(coordinator.cloud, labels)
@@ -57,27 +62,41 @@ def _bluetooth(coordinator: CombustionCoordinator, labels: _Labels) -> dict[str,
             monitor.session is not None for monitor in coordinator.predictions.values()
         ),
         "devices": {
-            labels(device.identifier): _bluetooth_device(device)
+            labels(device.identifier): _bluetooth_device(device.bluetooth)
             for device in coordinator.devices.values()
+            if device.bluetooth is not None
         },
     }
 
 
-def _bluetooth_device(device: CombustionDevice) -> dict[str, Any]:
+def _device(device: CombustionDevice) -> dict[str, Any]:
+    """Describe what entities show."""
     result: dict[str, Any] = {
         "model": device.model,
         "available": device.available,
-        "rssi": device.rssi,
         "low_battery": device.low_battery,
     }
     if isinstance(device, ProbeDevice):
         prediction = device.prediction
         food_safety = device.food_safety
         result |= {
-            "hop_count": device.bluetooth.source_hop_count,
+            "source": device.source,
+            "bluetooth_age": device.bluetooth_age,
+            "cloud_age": device.cloud_age,
             "readings": asdict(device.readings),
             "prediction": None if prediction is None else asdict(prediction),
             "food_safety": None if food_safety is None else asdict(food_safety),
+        }
+    return result
+
+
+def _bluetooth_device(heard: Probe | Gauge) -> dict[str, Any]:
+    result: dict[str, Any] = {"available": heard.available, "rssi": heard.rssi}
+    if isinstance(heard, Probe):
+        result |= {
+            "hop_count": heard.source_hop_count,
+            "prediction_reported": heard.prediction is not None,
+            "food_safety_reported": heard.food_safe is not None,
         }
     return result
 

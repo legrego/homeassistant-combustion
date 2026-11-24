@@ -140,6 +140,13 @@
             },
             "food_safety_target_log_reduction": {
                 "name": "Food safety target log reduction"
+            },
+            "data_source": {
+                "name": "Data source",
+                "state": {
+                    "bluetooth": "Bluetooth",
+                    "cloud": "MeatNet Cloud"
+                }
             }
         }
     },
@@ -166,7 +173,7 @@
             "message": "SafeCook commands need cooking predictions and SafeCook enabled in the Combustion integration options."
         },
         "probe_not_heard": {
-            "message": "Probe {probe} has not been heard since Home Assistant started."
+            "message": "Probe {probe} has not been heard over Bluetooth since Home Assistant started."
         },
         "food_safety_product_unsupported": {
             "message": "Only Simplified programs, other than Default, can be started from Home Assistant. Choose other programs in the Combustion app or Display."
@@ -197,7 +204,7 @@
             },
             "link_cloud": {
                 "title": "Link a MeatNet Cloud account",
-                "description": "Experimental. Sign in with the email and password of your Combustion app account, which is separate from a Combustion store account. Google and Apple sign-in aren't supported. Your password is only used to sign in and isn't saved.\n\nMeatNet Cloud is undocumented, so Combustion can change it without notice. Bluetooth works with or without it.",
+                "description": "Experimental. Shows your account's linked probes when they are out of Bluetooth range. Sign in with the email and password of your Combustion app account, which is separate from a Combustion store account. Google and Apple sign-in aren't supported. Your password is only used to sign in and isn't saved.\n\nMeatNet Cloud is undocumented, so Combustion can change it without notice. Bluetooth works with or without it.",
                 "data": {
                     "email": "Email",
                     "password": "Password"

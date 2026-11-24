@@ -13,7 +13,7 @@ Device | Entities
 Predictive Thermometer | Core, surface, and ambient temperature. Instant read temperature, while the probe is in instant read mode. Low battery. Each of the 8 thermistors and RSSI (disabled by default). Optional cooking target (settable), time remaining, and prediction status, and SafeCook food safety (configurable).
 Giant Grill Gauge | Temperature (unknown when no sensor is plugged in). Low battery. RSSI (disabled by default).
 
-By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions and SafeCook use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise.
+By default, the integration listens to Bluetooth advertisements without connecting to your devices. Temperature and battery sensors work with any Bluetooth adapter or proxy Home Assistant supports, including passive ones. Optional cooking predictions and SafeCook use one Bluetooth connection to a MeatNet repeater when one is in range, or a direct connection to each probe otherwise. An optional [MeatNet Cloud account](#meatnet-cloud) shows probes that are out of Bluetooth range.
 
 Requires Home Assistant 2026.10.4 or newer.
 
@@ -40,7 +40,12 @@ One setup covers every Combustion device in range. New devices are added automat
 
 ## Configuration
 
-No address, account, or credentials are required. The integration listens for advertisements through Home Assistant's Bluetooth integration. Cooking predictions and SafeCook can be enabled in the integration options.
+No address, account, or credentials are required. The integration listens for advertisements through Home Assistant's Bluetooth integration. Two things are optional, under **Settings > Devices & services > Combustion > Configure**:
+
+Option | Description
+-- | --
+Cooking predictions and SafeCook | Connects over Bluetooth for [predictions](#cooking-predictions), SafeCook, and cooking targets. Off by default.
+Link a MeatNet Cloud account | Signs in with an email and password, to show [linked probes](#meatnet-cloud) that are out of Bluetooth range. Nothing is linked by default.
 
 The integration provides sensor and binary sensor entities, and, with cooking predictions on, a cooking target number and a cancel button. It does not define its own actions, triggers, or conditions; use the entities with Home Assistant's standard triggers, conditions, and actions, such as `number.set_value` and `button.press`.
 
@@ -54,7 +59,7 @@ It can hear a probe directly, or through a MeatNet repeater such as the [Range-E
 
 Probes, gauges, and repeaters broadcast their readings several times a second, and entities update as soon as a reading changes. Readings are never polled; only [firmware and hardware versions](#firmware-and-hardware-versions) are read on a schedule.
 
-A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 2 minutes. Home Assistant passes along each device's advertisements from only one Bluetooth adapter or proxy at a time, which can go a minute or more between them when its signal is weak. Probes don't broadcast while they're in their charger, so they show as unavailable there.
+A device becomes unavailable when it hasn't been heard, directly or through a repeater, for 2 minutes, unless [MeatNet Cloud](#meatnet-cloud) reports it. Home Assistant passes along each device's advertisements from only one Bluetooth adapter or proxy at a time, which can go a minute or more between them when its signal is weak. Probes don't broadcast while they're in their charger, so they show as unavailable there.
 
 ## Firmware and hardware versions
 
@@ -64,7 +69,7 @@ When cooking predictions are on, their connections also read versions. Otherwise
 
 ## Cooking predictions
 
-Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure**, select **Cooking predictions and SafeCook**, and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors and controls](#safecook-food-safety). Disabling the option releases the connections and removes these entities.
+Cooking predictions are optional and disabled by default. Open **Settings > Devices & services > Combustion > Configure**, select **Cooking predictions and SafeCook**, and enable **Enable cooking predictions and SafeCook**. The integration reloads and adds, for each probe, a cooking target temperature you can set, a button to cancel it, time remaining and prediction status sensors, and [SafeCook sensors and controls](#safecook-food-safety). Disabling the option releases the connections and removes these entities, other than sensors that a linked [MeatNet Cloud account](#meatnet-cloud) also provides.
 
 This requires a Bluetooth adapter or proxy that supports active connections. Existing passive temperature sensors continue to work without connections.
 
@@ -98,7 +103,7 @@ Time above food safety threshold | How long the core has been above the threshol
 Food safety log reduction | Integrated mode only: the pathogen log reduction so far.
 Food safety target log reduction | Integrated mode only: the log reduction that makes the food safe.
 
-All of them are unknown until a connection reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off, food safety is **Off** and the other SafeCook sensors are unknown. The program's product and serving are [selects](#configuring-safecook).
+All of them are unknown until a connection, or [MeatNet Cloud](#meatnet-cloud), reports SafeCook data, and on probe firmware that doesn't support SafeCook. When SafeCook is turned off, food safety is **Off** and the other SafeCook sensors are unknown. The program's product and serving are [selects](#configuring-safecook).
 
 ### Configuring SafeCook
 
@@ -148,6 +153,34 @@ Take the probe out of its charger, keep it near the computer, and set a cooking 
 
 The script prints raw and decoded status notifications and saves them to a timestamped `.jsonl` report in the temporary directory; the full path is printed at the end. Share that report to check the packet format, prediction state, target, time remaining, SafeCook program and progress, update gaps, and connection behavior. Its summary lists every distinct SafeCook program seen for each probe. It reads notifications without changing the cooking target or SafeCook program. An idle or warming probe may have no usable time prediction; capturing during an active prediction is most useful. This checks local probe communication and decoding; Home Assistant dashboard and automation behavior still need testing in Home Assistant.
 
+## MeatNet Cloud
+
+Optional and experimental. [MeatNet Cloud](https://combustion.inc/pages/features/meat-net-cloud-watch-your-cook-from-anywhere) is Combustion's service for watching a cook from anywhere. With an account linked, probes keep reporting when they are out of Bluetooth range, as long as a WiFi accessory, or a phone running the Combustion app, uploads their readings.
+
+Combustion doesn't document the service, so they can change it without notice. Bluetooth works the same with or without it, including while it is down or rejects the account. Without an account linked, nothing is sent to or read from the internet.
+
+### Linking an account
+
+Open **Settings > Devices & services > Combustion > Configure**, select **Link a MeatNet Cloud account**, and sign in with the email and password of your Combustion app account. That is separate from a Combustion store account, and Google and Apple sign-in aren't supported. The integration stores the email, an account ID, and a token that keeps it signed in. It doesn't store the password.
+
+Every probe linked to the account then appears, even before Bluetooth has heard it. Probes that haven't been used recently show as unavailable. Each probe has one device and one set of entities, whichever source reports it, so history continues. Probes also get the time remaining, prediction status, and SafeCook sensors, whether or not cooking predictions are enabled over Bluetooth.
+
+If the service stops accepting the account, Home Assistant asks you to sign in again. To stop using it, select **Unlink the MeatNet Cloud account** in the same place. Devices are kept, and entities that only the cloud provides are removed.
+
+### Which source is used
+
+Data | Source
+-- | --
+Temperatures and battery | Bluetooth, if the probe was heard in the last 30 seconds. Otherwise the newest of either source, until it is 2 minutes old.
+Time remaining, prediction status, and SafeCook sensors | A Bluetooth prediction connection that reports the probe. Otherwise the cloud, if its sample is less than 30 seconds old.
+Firmware and hardware versions | Either source. The cloud's are used only from recent samples.
+Instant read temperature and RSSI | Bluetooth only.
+Cooking target, SafeCook selects, buttons, and the Configure SafeCook action | Bluetooth only. They are unavailable unless a prediction connection reaches the probe.
+
+The cloud usually sends a sample every 5 seconds. Samples are judged by when they were taken, not when they arrived, so a wrong clock on the phone or accessory that uploads them, or in Home Assistant, can make them look too old to use. Samples dated more than a minute ahead are ignored.
+
+To see which source a probe's temperatures come from, enable its **Data source** sensor, which is disabled by default.
+
 ## Known limitations
 
 - Only Simplified SafeCook programs can be configured from Home Assistant. Integrated programs set in the app are reported, and can be reset or turned off.
@@ -155,6 +188,9 @@ The script prints raw and decoded status notifications and saves them to a times
 - Repeaters don't get entities of their own.
 - The instant read temperature is in whole degrees Celsius, smoothed the way Combustion's apps show it. In Fahrenheit it changes in steps of about 2 °F.
 - RSSI is only known for probes heard directly.
+- MeatNet Cloud is only used for probes. Giant Grill Gauges are read over Bluetooth.
+- MeatNet Cloud doesn't say whether a probe is in instant read mode, and what it reports for a probe that is hasn't been checked.
+- Predictions and SafeCook progress from MeatNet Cloud follow the format Combustion's app uses, but haven't been checked during a cook.
 
 ## Troubleshooting
 
@@ -168,14 +204,17 @@ The script prints raw and decoded status notifications and saves them to a times
     logs:
       custom_components.combustion: debug
       combustion_ble: debug
+      combustion_cloud: debug
   ```
+
+- If MeatNet Cloud doesn't show a probe, check that the Combustion app shows it away from home, then check `cloud` in the diagnostics. `sample_age` is how many seconds ago its last reading was taken.
 
 ## Removing the integration
 
 1. Go to **Settings** > **Devices & services**, select **Combustion**, open the three-dot menu, and select **Delete**.
 1. If you installed it by hand, delete the `custom_components/combustion` folder and restart Home Assistant.
 
-To remove a single probe or gauge you no longer use, delete it from its device page. This works for devices that haven't been heard since Home Assistant last started.
+To remove a single probe or gauge you no longer use, delete it from its device page. This works for devices that haven't been heard since Home Assistant last started, and aren't linked to your MeatNet Cloud account.
 
 ## Upgrading
 

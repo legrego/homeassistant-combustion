@@ -26,3 +26,19 @@ CONF_REFRESH_TOKEN = "refresh_token"
 # along an advertisement only every 30 to 120 seconds, so the library's 15 second default made
 # probes flap between available and unavailable.
 STALE_TIMEOUT = 120
+
+# Seconds since a probe was last heard over Bluetooth that its Bluetooth readings are kept over
+# newer ones from MeatNet Cloud. Switching sooner would follow a weak Bluetooth signal back and
+# forth.
+BLUETOOTH_PREFERENCE = 30
+
+# Seconds that cloud predictions and SafeCook progress are shown for. They change with every sample,
+# which arrive about every 5 seconds, so they are outdated well before temperatures are.
+CLOUD_PREDICTION_TIMEOUT = 30
+
+# Seconds that a cloud sample's time may be ahead of this computer's clock and still be believed.
+# Sample times come from whichever phone or WiFi accessory uploaded the reading.
+CLOUD_CLOCK_SKEW = 60
+
+SOURCE_BLUETOOTH = "bluetooth"
+SOURCE_CLOUD = "cloud"

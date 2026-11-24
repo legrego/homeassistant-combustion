@@ -23,6 +23,7 @@ from combustion_cloud import (
     CombustionCloudClient,
     CombustionCloudError,
     Connected,
+    DeviceIdentity,
     DeviceStore,
     Disconnected,
     ProtocolError,
@@ -31,7 +32,7 @@ from combustion_cloud import (
     StreamEvent,
 )
 from homeassistant.const import CONF_EMAIL
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
@@ -96,6 +97,14 @@ class CloudManager:
         self.snapshot: Snapshot | None = None
         """The account, its linked devices, and which couldn't be read, when last read."""
         self.snapshot_at: datetime | None = None
+        self.linked: frozenset[DeviceIdentity] = frozenset()
+        """Devices linked to the account.
+
+        Until they have been listed in full, that includes any that send live updates.
+        """
+        self._linked_in_full = False
+        """Whether ``linked`` was last read in full, so that others are known not to be linked."""
+        self._listeners: list[CALLBACK_TYPE] = []
         self._new_credentials = asyncio.Event()
         self._snapshot_wanted = asyncio.Event()
         self._retry_delay = INITIAL_RETRY_DELAY
@@ -107,6 +116,17 @@ class CloudManager:
         self.entry.async_create_background_task(
             self.hass, self._async_run(), "Combustion MeatNet Cloud"
         )
+
+    @callback
+    def async_add_listener(self, listener: CALLBACK_TYPE) -> CALLBACK_TYPE:
+        """Call ``listener`` when a device reports, or the linked devices may have changed."""
+        self._listeners.append(listener)
+        return lambda: self._listeners.remove(listener)
+
+    @callback
+    def _async_notify(self) -> None:
+        for listener in list(self._listeners):
+            listener()
 
     @callback
     def async_entry_updated(self) -> None:
@@ -201,7 +221,10 @@ class CloudManager:
             case Disconnected(reason=reason):
                 self._async_failed(reason, logging.INFO)
             case CloudEvent(status=status) if status is not None:
-                self.store.update(status)
+                if self.store.update(status):
+                    if not self._linked_in_full:
+                        self.linked |= {status.identity}
+                    self._async_notify()
             case CloudEvent(type=kind) if kind == PREFERENCES_EVENT:
                 self._snapshot_wanted.set()
 
@@ -250,10 +273,16 @@ class CloudManager:
         self.snapshot_at = dt_util.utcnow()
         for status in snapshot.statuses.values():
             self.store.update(status)
-        if not snapshot.account.skipped_associations:
-            # Otherwise a device's absence doesn't mean it was unlinked.
-            for identity in set(self.store.devices) - set(snapshot.account.devices):
+        linked = frozenset(snapshot.account.devices)
+        self._linked_in_full = not snapshot.account.skipped_associations
+        if self._linked_in_full:
+            self.linked = linked
+            for identity in set(self.store.devices) - linked:
                 self.store.remove(identity)
+        else:
+            # A device's absence doesn't mean it was unlinked.
+            self.linked |= linked
+        self._async_notify()
 
     @callback
     def _async_save_tokens(self, tokens: AuthTokens, *, replacing: str) -> bool:

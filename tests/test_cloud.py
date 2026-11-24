@@ -670,6 +670,8 @@ async def test_real_client(hass: HomeAssistant, service: FakeService) -> None:
         {"type": "probe_status_update", "data": status_data(temperature=55.0)}
     )
     await eventually(lambda: core_temperature(manager) == 55)
+    await hass.async_block_till_done()
+    assert float(get_state(hass, "sensor", f"{PROBE}--sensor--core").state) == 55
     await assert_bluetooth_works(hass, entry, 30)
     assert entry.runtime_data.cloud is manager
 

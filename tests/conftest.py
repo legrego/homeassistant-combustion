@@ -56,8 +56,12 @@ class FakeClock:
 def clock() -> Generator[FakeClock]:
     """Give the integration's MeatNet a clock that tests control."""
     fake = FakeClock()
-    with patch(
-        "custom_components.combustion.coordinator.MeatNet", partial(MeatNet, clock=fake)
+    with (
+        patch(
+            "custom_components.combustion.coordinator.MeatNet",
+            partial(MeatNet, clock=fake),
+        ),
+        patch("custom_components.combustion.device.monotonic", fake),
     ):
         yield fake
 
