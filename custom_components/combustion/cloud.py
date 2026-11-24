@@ -97,7 +97,13 @@ class CloudManager:
         self.snapshot: Snapshot | None = None
         """The account, its linked devices, and which couldn't be read, when last read."""
         self.snapshot_at: datetime | None = None
-        self._linked: frozenset[DeviceIdentity] = frozenset()
+        self.linked: frozenset[DeviceIdentity] = frozenset()
+        """Devices linked to the account.
+
+        Until they have been listed in full, that includes any that send live updates.
+        """
+        self._linked_in_full = False
+        """Whether ``linked`` was last read in full, so that others are known not to be linked."""
         self._listeners: list[CALLBACK_TYPE] = []
         self._new_credentials = asyncio.Event()
         self._snapshot_wanted = asyncio.Event()
@@ -110,14 +116,6 @@ class CloudManager:
         self.entry.async_create_background_task(
             self.hass, self._async_run(), "Combustion MeatNet Cloud"
         )
-
-    @property
-    def linked(self) -> frozenset[DeviceIdentity]:
-        """Devices linked to the account.
-
-        Until the account has been read, those are the devices that send live updates.
-        """
-        return frozenset(self.store.devices) if self.snapshot is None else self._linked
 
     @callback
     def async_add_listener(self, listener: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -224,6 +222,8 @@ class CloudManager:
                 self._async_failed(reason, logging.INFO)
             case CloudEvent(status=status) if status is not None:
                 if self.store.update(status):
+                    if not self._linked_in_full:
+                        self.linked |= {status.identity}
                     self._async_notify()
             case CloudEvent(type=kind) if kind == PREFERENCES_EVENT:
                 self._snapshot_wanted.set()
@@ -274,13 +274,14 @@ class CloudManager:
         for status in snapshot.statuses.values():
             self.store.update(status)
         linked = frozenset(snapshot.account.devices)
-        if snapshot.account.skipped_associations:
-            # A device's absence doesn't mean it was unlinked.
-            linked |= self._linked
-        else:
+        self._linked_in_full = not snapshot.account.skipped_associations
+        if self._linked_in_full:
+            self.linked = linked
             for identity in set(self.store.devices) - linked:
                 self.store.remove(identity)
-        self._linked = linked
+        else:
+            # A device's absence doesn't mean it was unlinked.
+            self.linked |= linked
         self._async_notify()
 
     @callback

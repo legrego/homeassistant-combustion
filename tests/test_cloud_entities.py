@@ -290,6 +290,64 @@ async def test_live_updates_before_the_account_is_read(
     assert state(hass, CORE) == STATE_UNAVAILABLE
 
 
+async def test_live_updates_before_a_partly_read_list(
+    hass: HomeAssistant, cloud: FakeCloud
+) -> None:
+    """A probe already sending readings isn't dropped by a list that couldn't be read in full."""
+    cloud.failures["get_snapshot"] = [ApiError(503)]
+    entry = await setup_cloud(hass, cloud)
+    await send(hass, cloud, status_event(temperature=50.0))
+    assert float(state(hass, CORE)) == 50
+
+    cloud.snapshot = snapshot(status_data(OTHER_IDENTITY), skipped_associations=1)
+    await send(hass, cloud, PREFERENCES)
+    assert float(state(hass, f"{OTHER}--sensor--core")) == 20
+    assert float(state(hass, CORE)) == 50
+    await send(hass, cloud, status_event(temperature=51.0))
+    assert float(state(hass, CORE)) == 51
+    # Nor by later ones.
+    await send(hass, cloud, PREFERENCES)
+    assert float(state(hass, CORE)) == 51
+    device = get_device(hass, entry)
+    assert not await async_remove_config_entry_device(hass, entry, device)
+
+    cloud.snapshot = snapshot(status_data(OTHER_IDENTITY))
+    await send(hass, cloud, PREFERENCES)
+    assert state(hass, CORE) == STATE_UNAVAILABLE
+    assert await async_remove_config_entry_device(hass, entry, device)
+
+
+async def test_live_updates_after_a_partly_read_list(
+    hass: HomeAssistant, cloud: FakeCloud
+) -> None:
+    """A probe missing from a list that couldn't be read in full appears once it reports."""
+    cloud.snapshot = snapshot(status_data(OTHER_IDENTITY), skipped_associations=1)
+    entry = await setup_cloud(hass, cloud)
+    assert list(entry.runtime_data.devices) == [OTHER]
+    await send(hass, cloud, status_event(temperature=50.0))
+    assert float(state(hass, CORE)) == 50
+    assert float(state(hass, f"{OTHER}--sensor--core")) == 20
+    await send(hass, cloud, PREFERENCES)
+    assert float(state(hass, CORE)) == 50
+
+
+async def test_partly_read_list_after_unlinking(
+    hass: HomeAssistant, cloud: FakeCloud
+) -> None:
+    """A list that couldn't be read in full doesn't bring back an unlinked probe by itself."""
+    entry = await setup_cloud(hass, cloud)
+    cloud.snapshot = snapshot()
+    await send(hass, cloud, PREFERENCES)
+    await send(hass, cloud, status_event())
+    assert state(hass, CORE) == STATE_UNAVAILABLE
+
+    cloud.snapshot = snapshot(skipped_associations=1)
+    await send(hass, cloud, PREFERENCES)
+    assert state(hass, CORE) == STATE_UNAVAILABLE
+    device = get_device(hass, entry)
+    assert await async_remove_config_entry_device(hass, entry, device)
+
+
 async def test_controls_need_bluetooth(hass: HomeAssistant, cloud: FakeCloud) -> None:
     """The cloud doesn't make controls available, and commands explain why they fail."""
     entry = await setup_cloud(hass, cloud, options={CONF_ENABLE_PREDICTIONS: True})
@@ -530,7 +588,7 @@ async def test_nothing_is_added_while_unloading(
 
     async def link_another() -> None:
         await stop()
-        coordinator.cloud._linked |= {OTHER_IDENTITY}
+        coordinator.cloud.linked |= {OTHER_IDENTITY}
         coordinator.cloud._async_notify()
 
     with patch.object(coordinator, "async_stop_connections", link_another):
